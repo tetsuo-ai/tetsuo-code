@@ -18,16 +18,16 @@ A Neovim plugin that turns your editor into an AI coding IDE. Streaming chat pan
 
 ## Features
 
-- **Streaming chat panel** — vsplit that stays open alongside your code
-- **Agentic tool loop** — Grok reads files, edits code, runs commands, searches your project autonomously
-- **Inline editing** — select code, describe the change, preview the diff, accept/reject
-- **Auto-context** — every message includes your current file, cursor, git branch, and LSP diagnostics
-- **User confirmation** — prompts before file writes and shell commands (with "Always" option)
-- **Token tracking** — live usage counter in the statusline
-- **Conversation persistence** — save/load chat history to disk
-- **Runtime model switching** — swap between Grok models on the fly
-- **Project config** — drop a `.tetsuorc` in your project root for per-project settings
-- **Zero dependencies** — just Neovim + curl
+- **Streaming chat panel** - vsplit that stays open alongside your code
+- **Agentic tool loop** - Grok reads files, edits code, runs commands, searches your project autonomously
+- **Inline editing** - select code, describe the change, preview the diff, accept/reject
+- **Auto-context** - every message includes your current file, cursor, git branch, and LSP diagnostics
+- **User confirmation** - prompts before file writes and shell commands (with "Always" option)
+- **Token tracking** - live usage counter in the statusline
+- **Conversation persistence** - save/load chat history to disk
+- **Runtime model switching** - swap between Grok models on the fly
+- **Project config** - drop a `.tetsuorc` in your project root for per-project settings
+- **Zero dependencies** - just Neovim + curl
 
 ## Install
 
@@ -150,4 +150,4 @@ Create a `.tetsuorc` in your project root:
 
 ## License
 
-MIT
+GNU General Public License v3.0
