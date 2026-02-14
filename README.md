@@ -1,8 +1,6 @@
 <p align="center">
   <img src="assets/banner.jpg" alt="TetsuoCode" width="100%" />
 </p>
-
-<h1 align="center">TetsuoCode</h1>
 <p align="center"><strong>Cursor for Vim, Powered by Grok.</strong></p>
 
 <p align="center">
