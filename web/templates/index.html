@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>tetsuocode</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.0/marked.min.js"></script>
+</head>
+<body>
+  <div class="app">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <span class="logo">tetsuocode</span>
+      </div>
+      <div class="sidebar-nav">
+        <button class="nav-btn active" onclick="newChat()">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          new chat
+        </button>
+      </div>
+      <div class="sidebar-chats" id="chatHistory"></div>
+      <div class="sidebar-footer">
+        <div class="model-select">
+          <label>model</label>
+          <select id="modelSelect">
+            <option value="grok-4-1-fast-reasoning">grok-4-1-fast-reasoning</option>
+            <option value="grok-3-fast">grok-3-fast</option>
+            <option value="grok-3">grok-3</option>
+            <option value="grok-3-mini">grok-3-mini</option>
+          </select>
+        </div>
+        <div class="token-count" id="tokenCount"></div>
+      </div>
+    </aside>
+
+    <!-- Main chat area -->
+    <main class="chat-area">
+      <div class="chat-header">
+        <span class="chat-title" id="chatTitle">new chat</span>
+      </div>
+
+      <div class="messages" id="messages">
+        <div class="welcome">
+          <h1>tetsuocode</h1>
+          <p>ai coding assistant powered by grok</p>
+          <div class="welcome-hints">
+            <div class="hint" onclick="insertPrompt('explain this codebase')">explain this codebase</div>
+            <div class="hint" onclick="insertPrompt('find and fix bugs')">find and fix bugs</div>
+            <div class="hint" onclick="insertPrompt('write tests for this project')">write tests</div>
+            <div class="hint" onclick="insertPrompt('refactor for performance')">refactor for performance</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Input area -->
+      <div class="input-area">
+        <div class="input-container">
+          <textarea id="messageInput" placeholder="ask tetsuo anything..." rows="1" autofocus></textarea>
+          <button class="send-btn" id="sendBtn" onclick="sendMessage()">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 13l10-5L3 3v4l6 1-6 1v4z" fill="currentColor"/></svg>
+          </button>
+          <button class="cancel-btn hidden" id="cancelBtn" onclick="cancelStream()">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="3" y="3" width="10" height="10" rx="1" fill="currentColor"/></svg>
+          </button>
+        </div>
+        <div class="input-hint">enter to send &middot; shift+enter for newline &middot; esc to cancel</div>
+      </div>
+    </main>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
