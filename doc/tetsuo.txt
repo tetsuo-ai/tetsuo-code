@@ -1,4 +1,4 @@
-*tetsuo.txt*  tetsuocode: Cursor for Vim, Powered by Grok
+*tetsuo.txt*  tetsuocode: AI Coding Assistant, Powered by Grok
 
 ==============================================================================
 CONTENTS                                                    *tetsuo-contents*
@@ -14,15 +14,16 @@ CONTENTS                                                    *tetsuo-contents*
 ==============================================================================
 INTRODUCTION                                            *tetsuo-introduction*
 
-tetsuocode is a Neovim plugin that turns your editor into a Cursor-style AI
-coding IDE powered by xAI's Grok. It features:
+tetsuocode is available as a web app and a Neovim plugin. Both are powered
+by xAI's Grok and support agentic tool calling. This help file covers the
+Neovim plugin. Features:
 
 - Streaming chat panel with full conversation history
 - Tool calling: Grok can read/write files, run shell commands, grep, explore
 - Inline code editing with visual diff preview
 - Auto-context: file, diagnostics, git branch, selection
 - User confirmation before file writes and shell commands
-- Token usage tracking with cost display
+- Token usage tracking
 - Conversation save/load to disk
 - Runtime model switching
 - Project-level config via .tetsuorc
@@ -36,7 +37,7 @@ SETUP                                                        *tetsuo-setup*
 <
 2. Install the plugin (lazy.nvim example): >lua
      {
-       "tetsuo-ai/tetsuocode",
+       "tetsuo-ai/tetsuo-code",
        config = function()
          require("tetsuo").setup()
        end,
@@ -44,7 +45,7 @@ SETUP                                                        *tetsuo-setup*
 <
 3. Or with options: >lua
      require("tetsuo").setup({
-       model = "grok-3-fast",
+       model = "grok-4-1-fast-reasoning",
        temperature = 0.5,
        keymaps = {
          toggle_chat = "<leader>tc",
@@ -71,7 +72,7 @@ COMMANDS                                                  *tetsuo-commands*
 
 :TetsuoModel [model]                                       *:TetsuoModel*
     Switch the active Grok model. Without argument, opens a picker.
-    Example: :TetsuoModel grok-3-fast
+    Example: :TetsuoModel grok-4-1-fast-reasoning
 
 :TetsuoSave [name]                                          *:TetsuoSave*
     Save conversation to disk. Default name is a timestamp.
@@ -115,7 +116,7 @@ CONFIGURATION                                        *tetsuo-configuration*
 >lua
   require("tetsuo").setup({
     api_key = nil,            -- or set XAI_API_KEY env var
-    model = "grok-3-fast",    -- xAI model to use
+    model = "grok-4-1-fast-reasoning",
     base_url = "https://api.x.ai/v1",
     max_tokens = 4096,
     temperature = 0.7,
@@ -123,7 +124,7 @@ CONFIGURATION                                        *tetsuo-configuration*
     ui = {
       width = 0.38,           -- chat panel width (fraction)
       position = "right",     -- "right" or "left"
-      border = "rounded",     -- floating window border
+      border = "single",      -- floating window border
     },
 
     keymaps = {
@@ -170,7 +171,7 @@ PROJECT CONFIG                                      *tetsuo-project-config*
 
 Create a `.tetsuorc` file in your project root (JSON format): >json
   {
-    "model": "grok-3",
+    "model": "grok-4-1-fast-reasoning",
     "temperature": 0.5,
     "system_prompt": "You are working on a Rust project using Actix-web."
   }

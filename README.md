@@ -1,33 +1,44 @@
 <p align="center">
   <img src="assets/banner.jpg" alt="tetsuocode" width="100%" />
 </p>
-<p align="center"><strong>Cursor for Vim, Powered by Grok.</strong></p>
+<p align="center"><strong>AI Coding Assistant, Powered by Grok.</strong></p>
 
 <p align="center">
   <a href="https://github.com/tetsuo-ai/tetsuo-code/stargazers"><img src="https://img.shields.io/github/stars/tetsuo-ai/tetsuo-code?style=flat-square" /></a>
   <a href="https://github.com/tetsuo-ai/tetsuo-code/blob/main/LICENSE"><img src="https://img.shields.io/github/license/tetsuo-ai/tetsuo-code?style=flat-square" /></a>
-  <img src="https://img.shields.io/badge/neovim-%3E%3D0.9-green?style=flat-square&logo=neovim" />
   <img src="https://img.shields.io/badge/powered%20by-Grok-blue?style=flat-square" />
 </p>
 
 ---
 
-A Neovim plugin that turns your editor into an AI coding IDE. Streaming chat panel, agentic tool calling, inline code editing - all powered by xAI's Grok. Zero dependencies.
+An agentic AI coding assistant powered by xAI's Grok. Streaming chat, tool calling (file read/write, shell commands, search), code generation, and more. Available as a **web app** and a **Neovim plugin**.
 
-## Features
+## Web App
 
-- **Streaming chat panel** - vsplit that stays open alongside your code
-- **Agentic tool loop** - Grok reads files, edits code, runs commands, searches your project autonomously
-- **Inline editing** - select code, describe the change, preview the diff, accept/reject
-- **Auto-context** - every message includes your current file, cursor, git branch, and LSP diagnostics
-- **User confirmation** - prompts before file writes and shell commands (with "Always" option)
-- **Token tracking** - live usage counter in the statusline
-- **Conversation persistence** - save/load chat history to disk
-- **Runtime model switching** - swap between Grok models on the fly
-- **Project config** - drop a `.tetsuorc` in your project root for per-project settings
-- **Zero dependencies** - just Neovim + curl
+A standalone browser-based UI. No Vim required.
 
-## Install
+**Requirements:** Python 3.10+, an [xAI API key](https://console.x.ai)
+
+```bash
+export XAI_API_KEY="xai-..."
+cd web
+pip install flask requests
+python app.py
+```
+
+Open **http://localhost:5000**. Features:
+
+- Streaming chat with markdown and syntax highlighting
+- Agentic tool loop - Grok reads files, writes code, runs commands autonomously
+- Chat persistence across sessions (localStorage)
+- Model switching (grok-4-1-fast-reasoning, grok-3-fast, grok-3, grok-3-mini)
+- Code block copy buttons
+- Mobile responsive
+- Keyboard shortcuts: `Enter` send, `Shift+Enter` newline, `Ctrl+N` new chat, `Esc` cancel
+
+## Neovim Plugin
+
+For Vim users. Adds an AI chat panel directly in your editor.
 
 **Requirements:** Neovim >= 0.9, curl, an [xAI API key](https://console.x.ai)
 
@@ -55,7 +66,7 @@ use {
 }
 ```
 
-## Usage
+### Keymaps
 
 | Keymap | Action |
 |--------|--------|
@@ -94,18 +105,19 @@ Grok has access to these tools and uses them autonomously:
 | `write_file` | Create/overwrite files |
 | `edit_file` | Surgical find-and-replace |
 | `run_command` | Execute shell commands |
-| `get_current_buffer` | Read active buffer |
-| `get_diagnostics` | Get LSP errors/warnings |
-| `list_buffers` | List open buffers |
 | `list_files` | Project directory tree |
 | `grep_files` | Regex search across files |
 
+The Neovim plugin also exposes `get_current_buffer`, `get_diagnostics`, and `list_buffers`.
+
 ## Configuration
+
+### Neovim
 
 ```lua
 require("tetsuo").setup({
   api_key = nil,            -- or set XAI_API_KEY env var
-  model = "grok-4-1-fast-reasoning",    -- grok-4-1-fast-reasoning, Grok 4.1 Fast (Non-Reasoning)
+  model = "grok-4-1-fast-reasoning",
   base_url = "https://api.x.ai/v1",
   max_tokens = 4096,
   temperature = 0.7,
@@ -113,7 +125,7 @@ require("tetsuo").setup({
   ui = {
     width = 0.38,           -- chat panel width (fraction of editor)
     position = "right",     -- "right" or "left"
-    border = "rounded",
+    border = "single",
   },
 
   keymaps = {
@@ -134,7 +146,7 @@ require("tetsuo").setup({
 })
 ```
 
-## Project Config
+### Project Config
 
 Create a `.tetsuorc` in your project root:
 

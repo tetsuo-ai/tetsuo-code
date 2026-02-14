@@ -51,6 +51,10 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && streaming) {
     cancelStream();
   }
+  if (e.key === "n" && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    if (!streaming) newChat();
+  }
 });
 
 function insertPrompt(text) {
@@ -377,7 +381,7 @@ async function sendMessage() {
   addMessage("user", text);
   messages.push({ role: "user", content: text });
 
-  // Update title from first message
+  // Set temporary title from first message
   if (messages.filter((m) => m.role === "user").length === 1) {
     const title = text.length > 40 ? text.slice(0, 40) + "..." : text;
     chatTitleEl.textContent = title;
@@ -486,6 +490,12 @@ async function sendMessage() {
 
   if (fullContent) {
     messages.push({ role: "assistant", content: fullContent });
+
+    // Generate smart title after first exchange
+    const userMsgs = messages.filter((m) => m.role === "user");
+    if (userMsgs.length === 1) {
+      generateTitle(userMsgs[0].content, fullContent);
+    }
   }
 
   streaming = false;
@@ -500,6 +510,55 @@ async function sendMessage() {
 function cancelStream() {
   if (abortController) {
     abortController.abort();
+  }
+}
+
+// ── Smart Titles ──────────────────────────────
+
+async function generateTitle(userMsg, assistantMsg) {
+  try {
+    const model = document.getElementById("modelSelect").value;
+    const resp = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: [
+          { role: "user", content: userMsg },
+          { role: "assistant", content: assistantMsg.slice(0, 500) },
+          { role: "user", content: "Generate a 3-5 word title for this conversation. Reply with ONLY the title, no quotes, no punctuation, all lowercase." },
+        ],
+        model,
+      }),
+    });
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let title = "";
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        try {
+          const data = JSON.parse(line.slice(6));
+          if (data.type === "content") title += data.content;
+        } catch (e) {}
+      }
+    }
+
+    title = title.trim().toLowerCase().replace(/['"`.]/g, "");
+    if (title && title.length > 0 && title.length < 60) {
+      chatTitleEl.textContent = title;
+      saveState();
+      renderChatHistory();
+    }
+  } catch (e) {
+    // title generation is best-effort
   }
 }
 
