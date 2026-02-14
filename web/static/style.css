@@ -118,6 +118,7 @@ html, body {
 
 .chat-item {
   padding: 8px 12px;
+  padding-right: 28px;
   border-radius: 6px;
   font-size: 13px;
   color: var(--text-secondary);
@@ -127,6 +128,7 @@ html, body {
   overflow: hidden;
   text-overflow: ellipsis;
   transition: background 0.15s;
+  position: relative;
 }
 
 .chat-item:hover {
@@ -137,6 +139,31 @@ html, body {
 .chat-item.active {
   background: var(--bg-active);
   color: var(--text-primary);
+}
+
+.chat-delete {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 3px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.chat-item:hover .chat-delete {
+  opacity: 1;
+}
+
+.chat-delete:hover {
+  color: #cc4444;
+  background: rgba(204, 68, 68, 0.1);
 }
 
 .sidebar-footer {
@@ -406,6 +433,13 @@ html, body {
   color: var(--text-secondary);
   font-family: "SF Mono", monospace;
   font-size: 12px;
+  flex: 1;
+}
+
+.tool-call-header .tool-status {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-style: italic;
 }
 
 .tool-call-body {
@@ -548,9 +582,59 @@ textarea::placeholder {
   margin-top: 8px;
 }
 
+/* Error and dim text */
+.error-text {
+  color: #cc4444;
+  font-size: 13px;
+}
+
+.dim-text {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+/* Tool thinking indicator */
+.tool-thinking {
+  margin-top: 8px;
+}
+
+.tool-thinking .thinking {
+  padding: 8px 0;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .sidebar {
+    display: none;
+  }
+
+  .chat-area {
+    width: 100%;
+  }
+
+  .message {
+    padding: 16px;
+  }
+
+  .input-area {
+    padding: 12px 16px 16px;
+  }
+
+  .send-btn, .cancel-btn {
+    width: 44px;
+    height: 44px;
+  }
+
+  .welcome-hints {
+    padding: 0 16px;
+  }
+
+  .hint {
+    font-size: 12px;
+    padding: 6px 12px;
+  }
+
+  .input-hint {
     display: none;
   }
 }

@@ -189,6 +189,12 @@ def index():
 
 @app.route("/api/chat", methods=["POST"])
 def chat():
+    if not API_KEY:
+        return Response(
+            f"data: {json.dumps({'type': 'error', 'content': 'No API key configured. Set XAI_API_KEY environment variable.'})}\n\n",
+            mimetype="text/event-stream",
+        )
+
     data = request.json
     messages = data.get("messages", [])
     model = data.get("model", MODEL)
@@ -201,7 +207,8 @@ def chat():
         iteration = 0
         max_iterations = 10
 
-        while iteration < max_iterations:
+        try:
+          while iteration < max_iterations:
             iteration += 1
 
             body = {
@@ -226,7 +233,17 @@ def chat():
             )
 
             if resp.status_code != 200:
-                yield f"data: {json.dumps({'type': 'error', 'content': f'API error {resp.status_code}: {resp.text[:500]}'})}\n\n"
+                # Sanitize error - never leak API key or raw response
+                error_msg = f"API error {resp.status_code}"
+                try:
+                    err_data = resp.json()
+                    if "error" in err_data:
+                        error_msg = err_data["error"].get("message", error_msg)
+                except Exception:
+                    pass
+                # Strip any auth tokens from error messages
+                error_msg = error_msg.replace(API_KEY, "[REDACTED]") if API_KEY else error_msg
+                yield f"data: {json.dumps({'type': 'error', 'content': error_msg})}\n\n"
                 return
 
             content_buffer = ""
@@ -329,7 +346,17 @@ def chat():
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
             return
 
-        yield f"data: {json.dumps({'type': 'error', 'content': 'Max tool iterations reached'})}\n\n"
+          yield f"data: {json.dumps({'type': 'error', 'content': 'Max tool iterations reached'})}\n\n"
+
+        except requests.exceptions.ConnectionError:
+            yield f"data: {json.dumps({'type': 'error', 'content': 'Connection failed - check your network'})}\n\n"
+        except requests.exceptions.Timeout:
+            yield f"data: {json.dumps({'type': 'error', 'content': 'Request timed out'})}\n\n"
+        except Exception as e:
+            msg = str(e)
+            if API_KEY:
+                msg = msg.replace(API_KEY, "[REDACTED]")
+            yield f"data: {json.dumps({'type': 'error', 'content': f'Unexpected error: {msg}'})}\n\n"
 
     return Response(
         stream_with_context(generate()),

@@ -2,7 +2,7 @@ local M = {}
 
 M.defaults = {
   api_key = nil, -- falls back to $XAI_API_KEY
-  model = "grok-3-fast",
+  model = "grok-4-1-fast-reasoning",
   base_url = "https://api.x.ai/v1",
   max_tokens = 4096,
   temperature = 0.7,

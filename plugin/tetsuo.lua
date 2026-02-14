@@ -41,10 +41,10 @@ end, { desc = "Reset tetsuocode conversation" })
 
 vim.api.nvim_create_user_command("TetsuoModel", function(opts)
   local models = {
+    "grok-4-1-fast-reasoning",
     "grok-3-fast",
     "grok-3",
     "grok-3-mini",
-    "grok-2-vision-1212",
   }
 
   if opts.args ~= "" then
