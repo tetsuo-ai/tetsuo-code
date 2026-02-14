@@ -231,6 +231,7 @@ def chat():
                 stream=True,
                 timeout=120,
             )
+            resp.encoding = "utf-8"
 
             if resp.status_code != 200:
                 # Sanitize error - never leak API key or raw response
