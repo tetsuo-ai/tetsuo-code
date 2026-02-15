@@ -1,6 +1,7 @@
 """tetsuocode Web - AI coding assistant powered by Grok"""
 import json
 import os
+import re
 import time
 import difflib
 import hashlib
@@ -868,6 +869,180 @@ def file_edit_history():
         {"path": h["path"], "tool": h["tool"], "timestamp": h["timestamp"]}
         for h in FILE_EDIT_HISTORY[-20:]
     ]})
+
+
+# ── Workspace Grep ──────────────────────────────
+
+@app.route("/api/files/grep")
+def grep_workspace():
+    query = request.args.get("q", "")
+    is_regex = request.args.get("regex", "false") == "true"
+    case_sensitive = request.args.get("case", "false") == "true"
+    if not query:
+        return jsonify({"results": []})
+    flags = 0 if case_sensitive else re.IGNORECASE
+    try:
+        pattern = re.compile(query if is_regex else re.escape(query), flags)
+    except re.error:
+        return jsonify({"error": "Invalid regex"}), 400
+    results = []
+    skip_dirs = {".git", "node_modules", "__pycache__", "dist", "build", ".next", "venv", ".venv"}
+    skip_ext = {".pyc", ".pyo", ".exe", ".dll", ".so", ".o", ".class", ".png", ".jpg", ".gif", ".ico", ".woff", ".woff2", ".ttf"}
+    for root, dirs, filenames in os.walk(WORKSPACE):
+        dirs[:] = [d for d in dirs if d not in skip_dirs and not d.startswith(".")]
+        for fn in filenames:
+            ext = os.path.splitext(fn)[1].lower()
+            if ext in skip_ext:
+                continue
+            full = os.path.join(root, fn)
+            rel = os.path.relpath(full, WORKSPACE).replace("\\", "/")
+            try:
+                with open(full, "r", encoding="utf-8", errors="replace") as f:
+                    for i, line in enumerate(f, 1):
+                        if pattern.search(line):
+                            results.append({"file": rel, "path": full.replace("\\", "/"), "line": i, "text": line.rstrip()[:200]})
+                            if len(results) >= 200:
+                                break
+            except Exception:
+                continue
+            if len(results) >= 200:
+                break
+        if len(results) >= 200:
+            break
+    return jsonify({"results": results, "count": len(results)})
+
+
+@app.route("/api/files/replace", methods=["POST"])
+def replace_in_files():
+    data = request.json
+    query = data.get("query", "")
+    replacement = data.get("replacement", "")
+    is_regex = data.get("regex", False)
+    case_sensitive = data.get("case", False)
+    target_files = data.get("files", [])
+    if not query:
+        return jsonify({"error": "No search query"}), 400
+    flags = 0 if case_sensitive else re.IGNORECASE
+    try:
+        pattern = re.compile(query if is_regex else re.escape(query), flags)
+    except re.error:
+        return jsonify({"error": "Invalid regex"}), 400
+    if not target_files:
+        skip_dirs = {".git", "node_modules", "__pycache__", "dist", "build"}
+        skip_ext = {".pyc", ".pyo", ".exe", ".dll", ".so", ".png", ".jpg", ".gif"}
+        target_files = []
+        for root, dirs, filenames in os.walk(WORKSPACE):
+            dirs[:] = [d for d in dirs if d not in skip_dirs and not d.startswith(".")]
+            for fn in filenames:
+                if os.path.splitext(fn)[1].lower() not in skip_ext:
+                    target_files.append(os.path.join(root, fn).replace("\\", "/"))
+    replaced_count = 0
+    files_changed = []
+    for fpath in target_files:
+        try:
+            with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+            new_content, count = pattern.subn(replacement, content)
+            if count > 0:
+                FILE_EDIT_HISTORY.append({"path": fpath, "old_content": content, "new_content": new_content, "tool": "replace", "timestamp": time.time()})
+                if len(FILE_EDIT_HISTORY) > MAX_UNDO_HISTORY:
+                    FILE_EDIT_HISTORY.pop(0)
+                with open(fpath, "w", encoding="utf-8") as f:
+                    f.write(new_content)
+                replaced_count += count
+                files_changed.append(fpath)
+        except Exception:
+            continue
+    return jsonify({"replaced": replaced_count, "files": len(files_changed), "changed": files_changed})
+
+
+# ── Symbol Parsing ──────────────────────────────
+
+SYMBOL_PATTERNS = {
+    ".py": [(r"^\s*(async\s+)?def\s+(\w+)", "function", 2), (r"^\s*class\s+(\w+)", "class", 1)],
+    ".js": [(r"^\s*(?:async\s+)?function\s+(\w+)", "function", 1), (r"^\s*class\s+(\w+)", "class", 1),
+            (r"^\s*(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?\(", "function", 1),
+            (r"^\s*(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?function", "function", 1)],
+    ".ts": [(r"^\s*(?:async\s+)?function\s+(\w+)", "function", 1), (r"^\s*class\s+(\w+)", "class", 1),
+            (r"^\s*(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?\(", "function", 1),
+            (r"^\s*interface\s+(\w+)", "interface", 1), (r"^\s*type\s+(\w+)", "type", 1)],
+    ".go": [(r"^func\s+(?:\(.*?\)\s+)?(\w+)", "function", 1), (r"^type\s+(\w+)\s+struct", "class", 1),
+            (r"^type\s+(\w+)\s+interface", "interface", 1)],
+    ".rs": [(r"^\s*(?:pub\s+)?fn\s+(\w+)", "function", 1), (r"^\s*(?:pub\s+)?struct\s+(\w+)", "class", 1),
+            (r"^\s*(?:pub\s+)?enum\s+(\w+)", "enum", 1), (r"^\s*impl\s+(\w+)", "impl", 1)],
+    ".rb": [(r"^\s*def\s+(\w+)", "function", 1), (r"^\s*class\s+(\w+)", "class", 1), (r"^\s*module\s+(\w+)", "module", 1)],
+    ".java": [(r"^\s*(?:public|private|protected)?\s*(?:static\s+)?[\w<>\[\]]+\s+(\w+)\s*\(", "function", 1),
+              (r"^\s*(?:public\s+)?class\s+(\w+)", "class", 1)],
+}
+
+@app.route("/api/files/symbols")
+def file_symbols():
+    path = request.args.get("path", "")
+    if not path:
+        return jsonify({"symbols": []})
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+    ext = os.path.splitext(path)[1].lower()
+    patterns = SYMBOL_PATTERNS.get(ext, SYMBOL_PATTERNS.get(".js", []))
+    # Also try tsx/jsx as js
+    if ext in (".tsx", ".jsx", ".mjs"):
+        patterns = SYMBOL_PATTERNS.get(".js", [])
+    symbols = []
+    seen = set()
+    for i, line in enumerate(lines, 1):
+        for pat, kind, group in patterns:
+            m = re.match(pat, line)
+            if m:
+                try:
+                    name = m.group(group)
+                except IndexError:
+                    continue
+                indent = len(line) - len(line.lstrip())
+                key = f"{name}:{i}"
+                if key not in seen:
+                    seen.add(key)
+                    symbols.append({"name": name, "kind": kind, "line": i, "indent": indent})
+    return jsonify({"symbols": symbols})
+
+
+# ── Rename Symbol ──────────────────────────────
+
+@app.route("/api/files/rename-symbol", methods=["POST"])
+def rename_symbol():
+    data = request.json
+    old_name = data.get("old_name", "")
+    new_name = data.get("new_name", "")
+    if not old_name or not new_name:
+        return jsonify({"error": "Both old_name and new_name required"}), 400
+    pattern = re.compile(r'\b' + re.escape(old_name) + r'\b')
+    replaced_count = 0
+    files_changed = []
+    skip_dirs = {".git", "node_modules", "__pycache__", "dist", "build", ".venv", "venv"}
+    skip_ext = {".pyc", ".pyo", ".exe", ".dll", ".so", ".png", ".jpg", ".gif", ".ico"}
+    for root, dirs, filenames in os.walk(WORKSPACE):
+        dirs[:] = [d for d in dirs if d not in skip_dirs and not d.startswith(".")]
+        for fn in filenames:
+            if os.path.splitext(fn)[1].lower() in skip_ext:
+                continue
+            fpath = os.path.join(root, fn).replace("\\", "/")
+            try:
+                with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+                    content = f.read()
+                new_content, count = pattern.subn(new_name, content)
+                if count > 0:
+                    FILE_EDIT_HISTORY.append({"path": fpath, "old_content": content, "new_content": new_content, "tool": "rename", "timestamp": time.time()})
+                    if len(FILE_EDIT_HISTORY) > MAX_UNDO_HISTORY:
+                        FILE_EDIT_HISTORY.pop(0)
+                    with open(fpath, "w", encoding="utf-8") as f:
+                        f.write(new_content)
+                    replaced_count += count
+                    files_changed.append({"path": fpath, "count": count})
+            except Exception:
+                continue
+    return jsonify({"replaced": replaced_count, "files": len(files_changed), "changed": files_changed})
 
 
 if __name__ == "__main__":

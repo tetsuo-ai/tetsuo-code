@@ -53,6 +53,67 @@
     </div>
   </div>
 
+  <!-- Workspace Search -->
+  <div class="wsearch-overlay hidden" id="wsearchOverlay">
+    <div class="wsearch-panel">
+      <div class="wsearch-header">
+        <span>workspace search</span>
+        <button class="wsearch-close" onclick="closeWorkspaceSearch()">&times;</button>
+      </div>
+      <div class="wsearch-inputs">
+        <input type="text" id="wsearchQuery" placeholder="search across files..." oninput="debounceWSearch()">
+        <input type="text" id="wsearchReplace" placeholder="replace with..." class="hidden" id="wsearchReplaceInput">
+        <div class="wsearch-options">
+          <label class="wsearch-opt"><input type="checkbox" id="wsearchCase"> Aa</label>
+          <label class="wsearch-opt"><input type="checkbox" id="wsearchRegex"> .*</label>
+          <button class="wsearch-toggle-replace" onclick="toggleWSearchReplace()">replace</button>
+        </div>
+      </div>
+      <div class="wsearch-results" id="wsearchResults"></div>
+      <div class="wsearch-actions hidden" id="wsearchActions">
+        <button class="wsearch-action-btn" onclick="replaceAllWorkspace()">replace all</button>
+        <span class="wsearch-summary" id="wsearchSummary"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Keyboard Shortcuts -->
+  <div class="shortcuts-overlay hidden" id="shortcutsOverlay" onclick="closeShortcuts()">
+    <div class="shortcuts-box" onclick="event.stopPropagation()">
+      <div class="shortcuts-header">
+        <span>keyboard shortcuts</span>
+        <button onclick="closeShortcuts()">&times;</button>
+      </div>
+      <div class="shortcuts-body">
+        <div class="shortcut-row"><kbd>Ctrl+N</kbd><span>New chat</span></div>
+        <div class="shortcut-row"><kbd>Ctrl+P</kbd><span>Quick open file</span></div>
+        <div class="shortcut-row"><kbd>Ctrl+K</kbd><span>Command palette</span></div>
+        <div class="shortcut-row"><kbd>Ctrl+F</kbd><span>Search messages</span></div>
+        <div class="shortcut-row"><kbd>Ctrl+Shift+F</kbd><span>Search workspace</span></div>
+        <div class="shortcut-row"><kbd>Ctrl+H</kbd><span>Find & replace in editor</span></div>
+        <div class="shortcut-row"><kbd>Ctrl+,</kbd><span>Settings</span></div>
+        <div class="shortcut-row"><kbd>Ctrl+`</kbd><span>Toggle terminal</span></div>
+        <div class="shortcut-row"><kbd>Ctrl+Z</kbd><span>Undo last AI edit</span></div>
+        <div class="shortcut-row"><kbd>Ctrl+/</kbd><span>This help</span></div>
+        <div class="shortcut-row"><kbd>Enter</kbd><span>Send message</span></div>
+        <div class="shortcut-row"><kbd>Shift+Enter</kbd><span>New line</span></div>
+        <div class="shortcut-row"><kbd>Escape</kbd><span>Cancel / close</span></div>
+        <div class="shortcut-row"><kbd>@filename</kbd><span>Mention file</span></div>
+        <div class="shortcut-row"><kbd>j / k</kbd><span>Navigate file tree</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Context Menu -->
+  <div class="context-menu hidden" id="contextMenu">
+    <div class="context-item" onclick="contextAction('explain')">Explain this code</div>
+    <div class="context-item" onclick="contextAction('fix')">Fix this code</div>
+    <div class="context-item" onclick="contextAction('test')">Write tests</div>
+    <div class="context-item" onclick="contextAction('refactor')">Refactor</div>
+    <div class="context-item" onclick="contextAction('docs')">Add documentation</div>
+    <div class="context-item" onclick="contextAction('rename')">Rename symbol...</div>
+  </div>
+
   <!-- Search -->
   <div class="search-overlay hidden" id="searchOverlay">
     <div class="search-box">
@@ -65,7 +126,7 @@
   <div class="app">
     <div class="sidebar-overlay hidden" id="sidebarOverlay" onclick="toggleSidebar()"></div>
 
-    <aside class="sidebar">
+    <aside class="sidebar" id="sidebar">
       <div class="sidebar-header">
         <span class="logo">tetsuocode</span>
         <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme">
@@ -77,15 +138,24 @@
         <button class="sidebar-tab active" onclick="switchTab('chats')" id="tabChats">chats</button>
         <button class="sidebar-tab" onclick="switchTab('files')" id="tabFiles">files</button>
         <button class="sidebar-tab" onclick="switchTab('git')" id="tabGit">git</button>
+        <button class="sidebar-tab" onclick="switchTab('outline')" id="tabOutline">outline</button>
       </div>
 
       <!-- Chats -->
       <div class="sidebar-panel" id="panelChats">
         <div class="sidebar-nav">
-          <button class="nav-btn active" onclick="newChat()">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-            new chat
-          </button>
+          <div class="nav-row">
+            <button class="nav-btn active" onclick="newChat()">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+              new chat
+            </button>
+          </div>
+          <div class="session-bar">
+            <button class="session-btn" onclick="saveSessionSnapshot()" title="Save session">save</button>
+            <select id="sessionSelect" onchange="loadSessionSnapshot(this.value)" title="Load session">
+              <option value="">sessions...</option>
+            </select>
+          </div>
         </div>
         <div class="sidebar-chats" id="chatHistory"></div>
         <div class="trash-section hidden" id="trashSection">
@@ -128,6 +198,17 @@
         </div>
       </div>
 
+      <!-- Outline -->
+      <div class="sidebar-panel hidden" id="panelOutline">
+        <div class="outline-header">
+          <span>symbols</span>
+          <button class="outline-refresh" onclick="loadOutline()">&#8635;</button>
+        </div>
+        <div class="outline-list" id="outlineList">
+          <div class="outline-empty">open a file to see symbols</div>
+        </div>
+      </div>
+
       <div class="sidebar-footer">
         <div class="sidebar-actions">
           <button class="sidebar-action-btn" onclick="exportChats()">export</button>
@@ -147,6 +228,7 @@
           <div class="context-fill" id="contextFill"></div>
         </div>
       </div>
+      <div class="sidebar-resize" id="sidebarResize"></div>
     </aside>
 
     <!-- Settings -->
@@ -205,11 +287,22 @@
 
     <!-- Editor Panel -->
     <div class="editor-panel hidden" id="editorPanel">
+      <div class="editor-breadcrumb" id="editorBreadcrumb"></div>
       <div class="editor-tabs" id="editorTabs"></div>
       <div class="editor-toolbar">
+        <button class="editor-btn" onclick="toggleEditorFind()">find</button>
         <button class="editor-btn" onclick="toggleSplitEditor()">split</button>
         <button class="editor-btn" onclick="saveCurrentTab()">save</button>
         <button class="editor-btn" onclick="closeEditor()">&times;</button>
+      </div>
+      <div class="editor-find-bar hidden" id="editorFindBar">
+        <input type="text" id="editorFindInput" placeholder="find..." oninput="editorFind()">
+        <input type="text" id="editorReplaceInput" placeholder="replace...">
+        <button class="editor-find-btn" onclick="editorFindNext()">next</button>
+        <button class="editor-find-btn" onclick="editorReplaceOne()">replace</button>
+        <button class="editor-find-btn" onclick="editorReplaceAll()">all</button>
+        <span class="editor-find-count" id="editorFindCount"></span>
+        <button class="editor-find-close" onclick="toggleEditorFind()">&times;</button>
       </div>
       <div class="editor-panes">
         <textarea class="editor-content" id="editorContent" spellcheck="false"></textarea>
@@ -257,6 +350,7 @@
 
       <!-- Terminal -->
       <div class="terminal-panel hidden" id="terminalPanel">
+        <div class="terminal-resize" id="terminalResize"></div>
         <div class="terminal-header">
           <span>terminal</span>
           <button onclick="clearTerminal()">clear</button>
@@ -285,7 +379,7 @@
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="3" y="3" width="10" height="10" rx="1" fill="currentColor"/></svg>
           </button>
         </div>
-        <div class="input-hint">enter send &middot; ctrl+p open file &middot; ctrl+k commands &middot; ctrl+n new &middot; @ mention</div>
+        <div class="input-hint">enter send &middot; ctrl+p open &middot; ctrl+shift+f search all &middot; ctrl+/ shortcuts</div>
       </div>
     </main>
   </div>
