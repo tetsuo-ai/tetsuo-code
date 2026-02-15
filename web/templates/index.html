@@ -158,6 +158,7 @@
           </div>
         </div>
         <div class="sidebar-chats" id="chatHistory"></div>
+        <div class="fork-tree" id="forkTree"></div>
         <div class="trash-section hidden" id="trashSection">
           <div class="trash-header" onclick="toggleTrashList()">
             <span>trash</span>
@@ -289,6 +290,16 @@
             <option value="full">full — attach complete file contents (uses most context)</option>
           </select>
         </div>
+        <div class="setting-group">
+          <label class="setting-checkbox"><input type="checkbox" id="settingApproval"> require approval for file edits</label>
+        </div>
+        <div class="setting-group">
+          <label>MCP servers <span class="setting-hint">(Model Context Protocol)</span></label>
+          <div class="mcp-server-list" id="mcpServerList">
+            <div class="mcp-empty">no servers connected</div>
+          </div>
+          <button class="mcp-add-btn" onclick="addMcpServer()">+ add server</button>
+        </div>
         <button class="settings-save" onclick="applySettings()">save</button>
       </div>
     </div>
@@ -313,7 +324,10 @@
         <button class="editor-find-close" onclick="toggleEditorFind()">&times;</button>
       </div>
       <div class="editor-panes">
-        <textarea class="editor-content" id="editorContent" spellcheck="false"></textarea>
+        <div class="editor-pane-wrap">
+          <pre class="editor-highlight" id="editorHighlight"></pre>
+          <textarea class="editor-content" id="editorContent" spellcheck="false"></textarea>
+        </div>
         <textarea class="editor-content editor-split hidden" id="editorContentSplit" spellcheck="false"></textarea>
       </div>
       <div class="editor-minimap" id="editorMinimap"></div>
@@ -367,7 +381,7 @@
         <div class="terminal-output" id="terminalOutput"></div>
         <div class="terminal-input-line">
           <span class="terminal-prompt">$</span>
-          <input type="text" id="terminalInput" placeholder="enter command..." onkeydown="if(event.key==='Enter')runTerminal()">
+          <input type="text" id="terminalInput" placeholder="enter command..." onkeydown="if(event.key==='Enter')runTerminalStream()">
         </div>
       </div>
 

@@ -110,7 +110,7 @@ function renderChatHistory() {
     const del=document.createElement("button");del.className="chat-delete";del.innerHTML="&times;";del.onclick=(e)=>{e.stopPropagation();deleteChat(id)};
     actions.appendChild(fork);actions.appendChild(del);item.appendChild(actions);
     item.onclick=()=>{if(streaming)return;saveState();loadChat(id)};chatHistoryEl.appendChild(item);}
-  renderTrash();
+  renderTrash();renderForkTree();
 }
 
 function loadChat(id) {
@@ -150,13 +150,13 @@ function updateContextBar(){
 function exportChats(){const b=new Blob([JSON.stringify(chats,null,2)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=`tetsuocode-${new Date().toISOString().slice(0,10)}.json`;a.click();URL.revokeObjectURL(a.href)}
 function importChats(){const i=document.createElement("input");i.type="file";i.accept=".json";i.onchange=(e)=>{const r=new FileReader();r.onload=(ev)=>{try{Object.assign(chats,JSON.parse(ev.target.result));localStorage.setItem("tetsuocode_chats",JSON.stringify(chats));renderChatHistory()}catch(err){alert("Invalid JSON")}};r.readAsText(e.target.files[0])};i.click()}
 function exportMarkdown(){if(!messages.length)return;let md=`# ${chatTitleEl.textContent}\n\n`;for(const m of messages){if(m.role==="user")md+=`## You\n\n${m.content}\n\n`;else if(m.role==="assistant")md+=`## Tetsuo\n\n${m.content}\n\n`}const b=new Blob([md],{type:"text/markdown"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=`${chatTitleEl.textContent.replace(/[^a-z0-9]/gi,"-")}.md`;a.click();URL.revokeObjectURL(a.href)}
-async function uploadFile(file){const f=new FormData();f.append("file",file);try{const r=await fetch("/api/upload",{method:"POST",body:f});const d=await r.json();if(d.image)inputEl.value+=`\n[Attached image: ${d.filename}]`;else if(d.content)inputEl.value+=`\n\`\`\`\n// ${d.filename}\n${d.content.slice(0,5000)}\n\`\`\``;inputEl.focus();inputEl.style.height=Math.min(inputEl.scrollHeight,200)+"px"}catch(e){alert("Upload failed")}}
+// uploadFile moved below (multimodal version)
 
 // ── Settings ──────────────────────────────
-function toggleSettings(){const p=document.getElementById("settingsPanel");if(!p.classList.contains("hidden")){p.classList.add("hidden");return}document.getElementById("settingProvider").value=settings.provider;document.getElementById("settingApiKey").value=settings.api_key;document.getElementById("settingTemp").value=settings.temperature;document.getElementById("tempValue").textContent=settings.temperature;document.getElementById("settingMaxTokens").value=settings.max_tokens;document.getElementById("settingSystemPrompt").value=settings.system_prompt;document.getElementById("settingSound").checked=settings.sound;document.getElementById("settingAutoContext").checked=settings.autoContext;document.getElementById("settingContextMode").value=settings.contextMode||"smart";p.classList.remove("hidden")}
+function toggleSettings(){const p=document.getElementById("settingsPanel");if(!p.classList.contains("hidden")){p.classList.add("hidden");return}document.getElementById("settingProvider").value=settings.provider;document.getElementById("settingApiKey").value=settings.api_key;document.getElementById("settingTemp").value=settings.temperature;document.getElementById("tempValue").textContent=settings.temperature;document.getElementById("settingMaxTokens").value=settings.max_tokens;document.getElementById("settingSystemPrompt").value=settings.system_prompt;document.getElementById("settingSound").checked=settings.sound;document.getElementById("settingAutoContext").checked=settings.autoContext;document.getElementById("settingContextMode").value=settings.contextMode||"smart";document.getElementById("settingApproval").checked=settings.requireApproval||false;loadMcpServers();p.classList.remove("hidden")}
 function onProviderChange(){const p=document.getElementById("settingProvider").value;document.getElementById("modelSelect").innerHTML=(PROVIDER_MODELS[p]||[]).map(m=>`<option value="${m}">${m}</option>`).join("")}
 function onPresetChange(){document.getElementById("settingSystemPrompt").value=SYSTEM_PRESETS[document.getElementById("settingPreset").value]||""}
-function applySettings(){settings.provider=document.getElementById("settingProvider").value;settings.api_key=document.getElementById("settingApiKey").value;settings.temperature=parseFloat(document.getElementById("settingTemp").value)||0.7;settings.max_tokens=parseInt(document.getElementById("settingMaxTokens").value)||4096;settings.system_prompt=document.getElementById("settingSystemPrompt").value.trim();settings.sound=document.getElementById("settingSound").checked;settings.autoContext=document.getElementById("settingAutoContext").checked;settings.contextMode=document.getElementById("settingContextMode").value;saveSettings();populateModels();toggleSettings()}
+function applySettings(){settings.provider=document.getElementById("settingProvider").value;settings.api_key=document.getElementById("settingApiKey").value;settings.temperature=parseFloat(document.getElementById("settingTemp").value)||0.7;settings.max_tokens=parseInt(document.getElementById("settingMaxTokens").value)||4096;settings.system_prompt=document.getElementById("settingSystemPrompt").value.trim();settings.sound=document.getElementById("settingSound").checked;settings.autoContext=document.getElementById("settingAutoContext").checked;settings.contextMode=document.getElementById("settingContextMode").value;settings.requireApproval=document.getElementById("settingApproval").checked;saveSettings();populateModels();fetch("/api/settings/approval",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({require:settings.requireApproval})}).catch(()=>{});toggleSettings()}
 
 // ── Theme ──────────────────────────────
 function toggleTheme(){document.body.classList.toggle("light");localStorage.setItem("tetsuocode_theme",document.body.classList.contains("light")?"light":"dark")}
@@ -327,7 +327,7 @@ async function openInEditor(path){
 function renderEditorTabs(){
   const tabs=document.getElementById("editorTabs");tabs.innerHTML=editorTabs.map((t,i)=>{const name=t.path.split("/").pop().split("\\").pop();const modified=t.content!==t.original?"*":"";return`<div class="editor-tab${t.active?" active":""}" onclick="activateTab(${i})"><span>${escapeHtml(name)}${modified}</span><button class="editor-tab-close" onclick="event.stopPropagation();closeTab(${i})">&times;</button></div>`}).join("");
   const active=editorTabs.find(t=>t.active);const ed=document.getElementById("editorContent");
-  if(active){ed.value=active.content;ed.oninput=()=>{active.content=ed.value;renderEditorTabs();updateMinimap()};updateMinimap()}
+  if(active){ed.value=active.content;ed.oninput=()=>{active.content=ed.value;renderEditorTabs();updateMinimap();updateEditorHighlight()};ed.onscroll=()=>syncEditorScroll();updateMinimap();updateEditorHighlight()}
   const splitEl=document.getElementById("editorContentSplit");if(splitMode&&splitTab){splitEl.classList.remove("hidden");splitEl.value=splitTab.content;splitEl.oninput=()=>{splitTab.content=splitEl.value;renderEditorTabs()}}else{splitEl.classList.add("hidden")}
   renderBreadcrumb(); saveSessionState();
 }
@@ -450,7 +450,7 @@ function showToolThinking(){const sm=document.getElementById("streamingMessage")
 function removeToolThinking(){const el=document.querySelector("#streamingMessage .tool-thinking");if(el)el.remove()}
 function renderDiff(diff){if(!diff)return"";return`<div class="diff-side-by-side">${renderSideBySide(diff)}</div>`}
 function renderSideBySide(diff){const lines=diff.split("\n");let left=[],right=[];for(const line of lines){if(line.startsWith("---")||line.startsWith("+++"))continue;if(line.startsWith("@@")){left.push({type:"hunk",text:line});right.push({type:"hunk",text:line});continue}if(line.startsWith("-")){left.push({type:"del",text:line.slice(1)});right.push({type:"empty",text:""})}else if(line.startsWith("+")){left.push({type:"empty",text:""});right.push({type:"add",text:line.slice(1)})}else{left.push({type:"ctx",text:line.slice(1)||line});right.push({type:"ctx",text:line.slice(1)||line})}}const renderCol=(col)=>col.map(l=>`<div class="diff-line diff-${l.type}">${escapeHtml(l.text)}</div>`).join("");return`<div class="diff-col">${renderCol(left)}</div><div class="diff-col">${renderCol(right)}</div>`}
-function formatToolOutput(raw){try{const p=JSON.parse(raw);if(p.diff){const revertBtn=p.path?`<button class="revert-btn" onclick="undoLastEdit()">revert</button>`:"";return renderDiff(p.diff)+`<div class="diff-meta">${escapeHtml(p.path||"")}${revertBtn}</div>`}if(p.image&&p.data)return`<img src="data:${p.mime};base64,${p.data}" style="max-width:100%;border-radius:4px">`;return escapeHtml(JSON.stringify(p,null,2))}catch(e){return escapeHtml(raw)}}
+// formatToolOutput moved below (approval flow version)
 function addToolCall(name,args){const sm=document.getElementById("streamingMessage");if(!sm)return;removeToolThinking();const b=sm.querySelector(".message-body");const div=document.createElement("div");div.className="tool-call";let preview=args;try{preview=JSON.stringify(JSON.parse(args),null,2)}catch(e){}if(preview.length>200)preview=preview.slice(0,200)+"...";div.innerHTML=`<div class="tool-call-header" onclick="this.parentElement.classList.toggle('collapsed')"><span class="tool-collapse-icon">&#9660;</span><span class="tool-name">${escapeHtml(name)}</span><span class="tool-status">running</span></div><div class="tool-call-body"><code>${escapeHtml(preview)}</code></div>`;b.appendChild(div);showToolThinking();scrollToBottom()}
 function addToolResult(name,result){const sm=document.getElementById("streamingMessage");if(!sm)return;removeToolThinking();const divs=sm.querySelectorAll(".tool-call");if(divs.length){const last=divs[divs.length-1];let preview=result;if(preview.length>1000)preview=preview.slice(0,1000)+"...";last.querySelector(".tool-call-body").innerHTML=`<code>${formatToolOutput(preview)}</code>`;const st=last.querySelector(".tool-status");if(st)st.textContent="done";last.classList.add("collapsed")}showToolThinking();scrollToBottom()}
 function playNotification(){if(!settings.sound)return;try{const ctx=new(window.AudioContext||window.webkitAudioContext)();const o=ctx.createOscillator();const g=ctx.createGain();o.connect(g);g.connect(ctx.destination);o.frequency.value=660;g.gain.value=0.08;o.start();o.stop(ctx.currentTime+0.12)}catch(e){}}
@@ -476,12 +476,12 @@ async function sendMessage(retryText){
   if(messages.filter(m=>m.role==="user").length===1)chatTitleEl.textContent=text.length>40?text.slice(0,40)+"...":text;
   inputEl.value="";inputEl.style.height="auto";streaming=true;sendBtn.classList.add("hidden");cancelBtn.classList.remove("hidden");
   const streamMsg=addThinking();const body=streamMsg.querySelector(".message-body");let fullContent="";let hadError=false;abortController=new AbortController();
-  try{const model=document.getElementById("modelSelect").value;const payload={messages,model,provider:settings.provider,context_mode:settings.contextMode||"smart"};if(settings.temperature!==0.7)payload.temperature=settings.temperature;if(settings.max_tokens!==4096)payload.max_tokens=settings.max_tokens;if(settings.system_prompt)payload.system_prompt=settings.system_prompt;if(settings.api_key)payload.api_key=settings.api_key;
+  try{const model=document.getElementById("modelSelect").value;const payload={messages,model,provider:settings.provider,context_mode:settings.contextMode||"smart"};if(settings.temperature!==0.7)payload.temperature=settings.temperature;if(settings.max_tokens!==4096)payload.max_tokens=settings.max_tokens;if(settings.system_prompt)payload.system_prompt=settings.system_prompt;if(settings.api_key)payload.api_key=settings.api_key;if(pendingImages.length){payload.images=pendingImages.slice();pendingImages=[]}
     const resp=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload),signal:abortController.signal});if(!resp.ok)throw new Error(`server returned ${resp.status}`);
     const reader=resp.body.getReader();const decoder=new TextDecoder();let buffer="";
     while(true){const{done,value}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});const lines=buffer.split("\n");buffer=lines.pop();
       for(const line of lines){if(!line.startsWith("data: "))continue;let data;try{data=JSON.parse(line.slice(6))}catch(e){continue}
-        if(data.type==="content"){if(!fullContent)body.innerHTML="";removeToolThinking();fullContent+=data.content;body.innerHTML=renderMarkdown(fullContent);body.classList.add("streaming-cursor");body.querySelectorAll("code.line-numbers").forEach(c=>{if(!c.querySelector(".line-number"))c.innerHTML=addLineNumbers(c.innerHTML)});scrollToBottom()}
+        if(data.type==="content"){if(!fullContent)body.innerHTML="";removeToolThinking();fullContent+=data.content;scheduleStreamRender(body,fullContent);scrollToBottom()}
         else if(data.type==="tool_call"){if(!fullContent)body.innerHTML="";addToolCall(data.name,data.args)}
         else if(data.type==="tool_result"){addToolResult(data.name,data.result)}
         else if(data.type==="usage"){totalTokens.prompt+=data.usage.prompt_tokens||0;totalTokens.completion+=data.usage.completion_tokens||0;totalTokens.total+=data.usage.total_tokens||0;updateTokenDisplay()}
@@ -489,7 +489,7 @@ async function sendMessage(retryText){
         else if(data.type==="done"){removeToolThinking()}}}
   }catch(e){removeToolThinking();if(e.name==="AbortError"){if(!fullContent)body.innerHTML='<span class="dim-text">cancelled</span>'}else{hadError=true;let msg="connection failed";if(e.message.includes("server returned"))msg=e.message;else if(e.message.includes("Failed to fetch")||e.message.includes("NetworkError"))msg="network error";body.innerHTML=`<span class="error-text">${escapeHtml(msg)}</span><button class="retry-btn" onclick="retryLast()">retry</button>`}}
   body.classList.remove("streaming-cursor");removeToolThinking();streamMsg.removeAttribute("id");document.title="tetsuocode";
-  if(fullContent){messages.push({role:"assistant",content:fullContent,timestamp:Date.now()});if(messages.filter(m=>m.role==="user").length===1)generateTitle(messages[0].content,fullContent);playNotification()}
+  if(fullContent){messages.push({role:"assistant",content:fullContent,timestamp:Date.now()});if(messages.filter(m=>m.role==="user").length===1)generateTitle(messages[0].content,fullContent);playNotification();autoSummarizeIfNeeded()}
   streaming=false;abortController=null;sendBtn.classList.remove("hidden");cancelBtn.classList.add("hidden");saveState();renderChatHistory();inputEl.focus()}
 function cancelStream(){if(abortController)abortController.abort()}
 function retryLast(){if(streaming)return;const all=messagesEl.querySelectorAll(".message");if(all.length)all[all.length-1].remove();const last=[...messages].reverse().find(m=>m.role==="user");if(last)sendMessage(last.content)}
@@ -504,5 +504,190 @@ function renderTemplates(){let saved=[];try{saved=JSON.parse(localStorage.getIte
 function useTemplate(i){let saved=[];try{saved=JSON.parse(localStorage.getItem("tetsuocode_templates")||"[]")}catch(e){}const all=[...defaultTemplates,...saved];if(all[i]){inputEl.value=all[i].prompt;inputEl.focus()}document.getElementById("templateMenu").classList.add("hidden")}
 function saveTemplate(){const text=inputEl.value.trim();if(!text){alert("Type a prompt first");return}const name=prompt("Template name:");if(!name)return;let saved=[];try{saved=JSON.parse(localStorage.getItem("tetsuocode_templates")||"[]")}catch(e){}saved.push({name,prompt:text});localStorage.setItem("tetsuocode_templates",JSON.stringify(saved));document.getElementById("templateMenu").classList.add("hidden")}
 
+// ── Incremental Streaming Render ──────────────
+let _renderPending=false;
+function scheduleStreamRender(body,content){
+  if(!_renderPending){_renderPending=true;requestAnimationFrame(()=>{
+    body.innerHTML=renderMarkdown(content);body.classList.add("streaming-cursor");
+    body.querySelectorAll("code.line-numbers").forEach(c=>{if(!c.querySelector(".line-number"))c.innerHTML=addLineNumbers(c.innerHTML)});
+    _renderPending=false;
+  })}
+}
+
+// ── Diff Approval Flow ──────────────────────
+function formatToolOutput(raw){
+  try{const p=JSON.parse(raw);
+    if(p.pending&&p.pending_id){
+      return renderDiff(p.diff)+`<div class="diff-meta diff-pending">${escapeHtml(p.path||"")}<button class="approve-btn" onclick="approveEdit('${p.pending_id}')">apply</button><button class="reject-btn" onclick="rejectEdit('${p.pending_id}')">reject</button><span class="pending-badge">pending</span></div>`;
+    }
+    if(p.diff){const revertBtn=p.path?`<button class="revert-btn" onclick="undoLastEdit()">revert</button>`:"";return renderDiff(p.diff)+`<div class="diff-meta">${escapeHtml(p.path||"")}${revertBtn}</div>`}
+    if(p.image&&p.data)return`<img src="data:${p.mime};base64,${p.data}" style="max-width:100%;border-radius:4px">`;
+    return escapeHtml(JSON.stringify(p,null,2))
+  }catch(e){return escapeHtml(raw)}
+}
+async function approveEdit(id){
+  try{const r=await fetch("/api/tools/approve",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id})});const d=await r.json();
+    if(d.success){showNotification("Applied: "+d.path.split("/").pop());document.querySelector(`.pending-badge`)?.closest('.diff-meta')?.querySelector('.pending-badge')?.remove();refreshEditorTab(d.path)}
+    else showNotification(d.error||"Failed","error")
+  }catch(e){showNotification("Approve failed","error")}
+}
+async function rejectEdit(id){
+  try{const r=await fetch("/api/tools/reject",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id})});const d=await r.json();
+    if(d.success)showNotification("Rejected: "+d.rejected.split("/").pop());
+  }catch(e){showNotification("Reject failed","error")}
+}
+async function refreshEditorTab(path){
+  const tab=editorTabs.find(t=>t.path===path);if(!tab)return;
+  try{const r=await fetch(`/api/files/read?path=${encodeURIComponent(path)}`);const d=await r.json();
+    if(d.content!==undefined){tab.content=d.content;tab.original=d.content;renderEditorTabs()}
+  }catch(e){}
+}
+
+// ── Syntax Highlighting Overlay ──────────────
+const EXT_TO_LANG={py:"python",js:"javascript",ts:"typescript",tsx:"typescript",jsx:"javascript",rs:"rust",go:"go",java:"java",rb:"ruby",php:"php",lua:"lua",sh:"bash",css:"css",html:"xml",json:"json",yml:"yaml",yaml:"yaml",md:"markdown",toml:"ini",sql:"sql"};
+function updateEditorHighlight(){
+  const hl=document.getElementById("editorHighlight");const ed=document.getElementById("editorContent");
+  if(!hl||!ed)return;const active=editorTabs.find(t=>t.active);if(!active){hl.innerHTML="";return}
+  const lang=EXT_TO_LANG[active.ext]||active.ext;
+  try{hl.innerHTML=lang&&hljs.getLanguage(lang)?hljs.highlight(ed.value,{language:lang}).value:hljs.highlightAuto(ed.value).value}
+  catch(e){hl.textContent=ed.value}
+}
+function syncEditorScroll(){
+  const ed=document.getElementById("editorContent");const hlWrap=document.getElementById("editorHighlight");
+  if(ed&&hlWrap){hlWrap.scrollTop=ed.scrollTop;hlWrap.scrollLeft=ed.scrollLeft}
+}
+
+// ── File Watcher ──────────────────────────
+let _watcherInterval=null;
+function startFileWatcher(){
+  if(_watcherInterval)return;
+  _watcherInterval=setInterval(async()=>{
+    if(!editorTabs.length)return;
+    const paths=editorTabs.map(t=>t.path);
+    try{const r=await fetch("/api/files/mtime",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({paths})});
+      const d=await r.json();
+      for(const c of d.changed||[]){
+        const tab=editorTabs.find(t=>t.path===c.path);
+        if(tab&&tab.content===tab.original){refreshEditorTab(c.path);showNotification(c.path.split("/").pop()+" changed on disk")}
+      }
+    }catch(e){}
+  },3000);
+}
+
+// ── Streaming Terminal ──────────────────────
+async function runTerminalStream(){
+  const inp=document.getElementById("terminalInput");const cmd=inp.value.trim();if(!cmd)return;
+  const out=document.getElementById("terminalOutput");
+  out.innerHTML+=`<div class="term-cmd">$ ${escapeHtml(cmd)}</div>`;inp.value="";
+  const outDiv=document.createElement("div");outDiv.className="term-out";out.appendChild(outDiv);
+  try{
+    const r=await fetch("/api/terminal/stream",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({command:cmd})});
+    const reader=r.body.getReader();const decoder=new TextDecoder();let buffer="";
+    while(true){const{done,value}=await reader.read();if(done)break;
+      buffer+=decoder.decode(value,{stream:true});const lines=buffer.split("\n");buffer=lines.pop();
+      for(const line of lines){if(!line.startsWith("data: "))continue;
+        try{const d=JSON.parse(line.slice(6));
+          if(d.type==="output")outDiv.innerHTML+=formatTerminalOutput(d.text);
+          else if(d.type==="exit"){if(d.code!==0)outDiv.classList.add("term-err");outDiv.innerHTML+=`\n<span class="test-warn">[exit ${d.code}]</span>`}
+          else if(d.type==="error")outDiv.innerHTML+=`<span class="test-fail">${escapeHtml(d.text)}</span>`;
+        }catch(e){}}
+      out.scrollTop=out.scrollHeight;
+    }
+  }catch(e){outDiv.innerHTML+=`<span class="term-err">Error: ${escapeHtml(e.message)}</span>`}
+  out.scrollTop=out.scrollHeight;
+}
+
+// ── Per-Hunk Diff with Accept/Reject ──────────
+function renderHunkedDiff(diff){
+  if(!diff)return"";
+  const lines=diff.split("\n");const hunks=[];let current=null;
+  for(const line of lines){
+    if(line.startsWith("---")||line.startsWith("+++"))continue;
+    if(line.startsWith("@@")){if(current)hunks.push(current);current={header:line,lines:[]};continue}
+    if(current)current.lines.push(line);
+  }
+  if(current)hunks.push(current);
+  return hunks.map((h,i)=>`<div class="diff-hunk-block"><div class="diff-hunk-header"><span>${escapeHtml(h.header)}</span></div><div class="diff-hunk-content">${h.lines.map(l=>{
+    if(l.startsWith("+"))return`<div class="diff-line diff-add">${escapeHtml(l.slice(1))}</div>`;
+    if(l.startsWith("-"))return`<div class="diff-line diff-del">${escapeHtml(l.slice(1))}</div>`;
+    return`<div class="diff-line diff-ctx">${escapeHtml(l.slice(1)||l)}</div>`;
+  }).join("")}</div></div>`).join("");
+}
+
+// ── Conversation Tree / Fork Graph ──────────────
+function renderForkTree(){
+  const roots=[];const children={};
+  for(const id of Object.keys(chats)){
+    const c=chats[id];const parent=c.forkedFrom;
+    if(parent&&chats[parent]){(children[parent]=children[parent]||[]).push(id)}
+    else roots.push(id);
+  }
+  const treeEl=document.getElementById("forkTree");if(!treeEl)return;
+  function buildTree(id,depth){
+    const c=chats[id];const indent=depth*12;const active=id===currentChatId?" fork-active":"";
+    let html=`<div class="fork-node${active}" style="padding-left:${8+indent}px" onclick="loadChat('${id}')" title="${escapeHtml(c.title||'chat')}"><span class="fork-dot">${depth>0?"├":"●"}</span><span class="fork-label">${escapeHtml((c.title||"chat").slice(0,25))}</span></div>`;
+    for(const child of (children[id]||[]).sort())html+=buildTree(child,depth+1);
+    return html;
+  }
+  treeEl.innerHTML=roots.sort((a,b)=>Number(b)-Number(a)).map(id=>buildTree(id,0)).join("");
+}
+
+// ── Multimodal Image Support ──────────────
+let pendingImages=[];
+async function uploadFile(file){
+  const f=new FormData();f.append("file",file);
+  try{const r=await fetch("/api/upload",{method:"POST",body:f});const d=await r.json();
+    if(d.image){
+      pendingImages.push({mime:d.mime,data:d.data,filename:d.filename});
+      inputEl.value+=`\n[Image attached: ${d.filename}]`;
+      showNotification("Image attached — will be sent with next message");
+    }else if(d.content){inputEl.value+=`\n\`\`\`\n// ${d.filename}\n${d.content.slice(0,5000)}\n\`\`\`\n`}
+    inputEl.focus();inputEl.style.height=Math.min(inputEl.scrollHeight,200)+"px";
+  }catch(e){alert("Upload failed")}
+}
+
+// ── Auto-Summarization ──────────────────────
+async function autoSummarizeIfNeeded(){
+  const model=document.getElementById("modelSelect").value;const limit=CONTEXT_LIMITS[model]||131072;
+  let total=0;for(const m of messages)total+=estimateTokens(m.content);
+  const pct=(total/limit)*100;
+  if(pct<80||messages.length<6)return;
+  showNotification("Auto-summarizing to free context...");
+  try{
+    const r=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
+      messages:[...messages.slice(0,Math.max(2,messages.length-4)),{role:"user",content:"Summarize the conversation so far in 2-3 concise paragraphs. Include key decisions and code changes."}],
+      model,provider:settings.provider,...(settings.api_key?{api_key:settings.api_key}:{})
+    })});
+    const reader=r.body.getReader();const decoder=new TextDecoder();let summary="",buffer="";
+    while(true){const{done,value}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});
+      const lines=buffer.split("\n");buffer=lines.pop();
+      for(const line of lines){if(!line.startsWith("data: "))continue;try{const d=JSON.parse(line.slice(6));if(d.type==="content")summary+=d.content}catch(e){}}
+    }
+    if(summary){
+      const recentMessages=messages.slice(-4);
+      messages=[{role:"system",content:`Previous conversation summary:\n${summary}`},...recentMessages];
+      showNotification("Context auto-summarized");saveState();
+    }
+  }catch(e){}
+}
+
+// ── MCP Configuration ──────────────────────
+async function loadMcpServers(){
+  try{const r=await fetch("/api/mcp/servers");const d=await r.json();
+    const list=document.getElementById("mcpServerList");if(!list)return;
+    list.innerHTML=(d.servers||[]).map(s=>`<div class="mcp-server"><span class="mcp-name">${escapeHtml(s.name)}</span><span class="mcp-tools">${s.tools.length} tools</span><button class="mcp-remove" onclick="removeMcpServer('${escapeHtml(s.name)}')">&times;</button></div>`).join("")||'<div class="mcp-empty">no servers connected</div>';
+  }catch(e){}
+}
+async function addMcpServer(){
+  const name=prompt("Server name:");if(!name)return;
+  const url=prompt("Server URL (e.g. http://localhost:3000):");if(!url)return;
+  try{const r=await fetch("/api/mcp/servers",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name,url})});
+    const d=await r.json();if(d.success){showNotification(`MCP server "${name}" added (${d.server.tools.length} tools)`);loadMcpServers()}
+  }catch(e){showNotification("Failed to add MCP server","error")}
+}
+async function removeMcpServer(name){
+  try{await fetch(`/api/mcp/servers?name=${encodeURIComponent(name)}`,{method:"DELETE"});loadMcpServers();showNotification(`Removed "${name}"`)}catch(e){}
+}
+
 // ── Init ──────────────────────────────
-(async function(){loadTheme();const ok=await checkAuth();if(ok)loadState();inputEl.focus()})();
+(async function(){loadTheme();const ok=await checkAuth();if(ok)loadState();inputEl.focus();startFileWatcher()})();

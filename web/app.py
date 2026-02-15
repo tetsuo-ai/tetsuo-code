@@ -86,6 +86,64 @@ def _build_file_skeleton(path, content):
 
     return "\n".join(parts) if parts else "\n".join(lines[:30]) + "\n// ..."
 
+
+# ── Security & Approval ──────────────────────────
+
+PENDING_EDITS = {}  # {id: {path, old_content, new_content, diff, tool, timestamp}}
+REQUIRE_APPROVAL = False
+MCP_SERVERS = []  # [{name, url, tools}]
+FILE_MTIMES = {}  # {path: mtime} for file watcher
+
+DANGEROUS_PATTERNS = [
+    "rm -rf /", "rm -rf ~", "rm -rf .", "mkfs.", "dd if=/dev", ":(){",
+    "chmod -R 777 /", "git push --force", "git reset --hard",
+    "DROP TABLE", "DROP DATABASE", "format c:", "> /dev/sda",
+    "shutdown -h", "reboot", "init 0",
+]
+
+
+def _resolve_path(path):
+    """Resolve path to absolute, ensure within workspace."""
+    if not path:
+        return None
+    if not os.path.isabs(path):
+        path = os.path.join(WORKSPACE, path)
+    abs_path = os.path.abspath(path)
+    if not abs_path.startswith(os.path.abspath(WORKSPACE)):
+        return None
+    return abs_path
+
+
+def _is_dangerous(command):
+    """Check for dangerous command patterns. Returns matched pattern or None."""
+    cl = command.lower().strip()
+    for p in DANGEROUS_PATTERNS:
+        if p.lower() in cl:
+            return p
+    return None
+
+
+def _convert_images_for_anthropic(content):
+    """Convert OpenAI-format image content blocks to Anthropic format."""
+    if isinstance(content, str):
+        return content
+    result = []
+    for block in content:
+        if block.get("type") == "text":
+            result.append(block)
+        elif block.get("type") == "image_url":
+            url = block["image_url"]["url"]
+            if url.startswith("data:"):
+                parts = url.split(",", 1)
+                header = parts[0]
+                data = parts[1] if len(parts) > 1 else ""
+                media_type = header.split(":")[1].split(";")[0]
+                result.append({"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}})
+        else:
+            result.append(block)
+    return result if result else content
+
+
 PROVIDERS = {
     "xai": {
         "name": "xAI (Grok)",
@@ -228,6 +286,10 @@ def compute_diff(old_content, new_content, path):
 def execute_tool(name, args):
     if name == "read_file":
         path = args.get("path", "")
+        resolved = _resolve_path(path)
+        if resolved is None:
+            return json.dumps({"error": "Access denied: path outside workspace"})
+        path = resolved
         try:
             with open(path, "r", encoding="utf-8", errors="replace") as f:
                 content = f.read()
@@ -240,6 +302,10 @@ def execute_tool(name, args):
     elif name == "write_file":
         path = args.get("path", "")
         content = args.get("content", "")
+        resolved = _resolve_path(path)
+        if resolved is None:
+            return json.dumps({"error": "Access denied: path outside workspace"})
+        path = resolved
         try:
             old_content = ""
             try:
@@ -247,13 +313,17 @@ def execute_tool(name, args):
                     old_content = f.read()
             except FileNotFoundError:
                 pass
+            diff = compute_diff(old_content, content, path)
+            if REQUIRE_APPROVAL:
+                edit_id = f"pe_{int(time.time()*1000)}"
+                PENDING_EDITS[edit_id] = {"path": path, "old_content": old_content, "new_content": content, "diff": diff, "tool": "write_file", "timestamp": time.time()}
+                return json.dumps({"pending": True, "pending_id": edit_id, "path": path, "diff": diff[:3000]})
             FILE_EDIT_HISTORY.append({"path": path, "old_content": old_content, "new_content": content, "tool": "write_file", "timestamp": time.time()})
             if len(FILE_EDIT_HISTORY) > MAX_UNDO_HISTORY:
                 FILE_EDIT_HISTORY.pop(0)
             os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
             with open(path, "w", encoding="utf-8") as f:
                 f.write(content)
-            diff = compute_diff(old_content, content, path)
             return json.dumps({"success": True, "path": path, "diff": diff[:3000]})
         except Exception as e:
             return json.dumps({"error": str(e)})
@@ -262,6 +332,10 @@ def execute_tool(name, args):
         path = args.get("path", "")
         old_string = args.get("old_string", "")
         new_string = args.get("new_string", "")
+        resolved = _resolve_path(path)
+        if resolved is None:
+            return json.dumps({"error": "Access denied: path outside workspace"})
+        path = resolved
         try:
             with open(path, "r", encoding="utf-8") as f:
                 content = f.read()
@@ -272,18 +346,25 @@ def execute_tool(name, args):
                 return json.dumps({"error": f"old_string found {count} times, must be unique"})
             old_content = content
             content = content.replace(old_string, new_string, 1)
+            diff = compute_diff(old_content, content, path)
+            if REQUIRE_APPROVAL:
+                edit_id = f"pe_{int(time.time()*1000)}"
+                PENDING_EDITS[edit_id] = {"path": path, "old_content": old_content, "new_content": content, "diff": diff, "tool": "edit_file", "timestamp": time.time()}
+                return json.dumps({"pending": True, "pending_id": edit_id, "path": path, "diff": diff[:3000]})
             FILE_EDIT_HISTORY.append({"path": path, "old_content": old_content, "new_content": content, "tool": "edit_file", "timestamp": time.time()})
             if len(FILE_EDIT_HISTORY) > MAX_UNDO_HISTORY:
                 FILE_EDIT_HISTORY.pop(0)
             with open(path, "w", encoding="utf-8") as f:
                 f.write(content)
-            diff = compute_diff(old_content, content, path)
             return json.dumps({"success": True, "path": path, "diff": diff[:3000]})
         except Exception as e:
             return json.dumps({"error": str(e)})
 
     elif name == "run_command":
         command = args.get("command", "")
+        danger = _is_dangerous(command)
+        if danger:
+            return json.dumps({"error": f"Blocked: dangerous pattern '{danger}' detected. Disable safety in settings to override."})
         try:
             result = subprocess.run(
                 command, shell=True, capture_output=True, text=True, timeout=30
@@ -382,7 +463,10 @@ def convert_messages_for_anthropic(messages):
                 content.append({"type": "tool_use", "id": tc["id"], "name": tc["function"]["name"], "input": inp})
             result.append({"role": "assistant", "content": content})
             continue
-        result.append({"role": msg["role"], "content": msg["content"]})
+        content = msg["content"]
+        if isinstance(content, list):
+            content = _convert_images_for_anthropic(content)
+        result.append({"role": msg["role"], "content": content})
     return system, result
 
 
@@ -1217,6 +1301,137 @@ def estimate_context():
         "usage_pct": round((total / limit) * 100, 1) if limit else 0,
         "remaining": limit - total, "breakdown": breakdown,
     })
+
+
+# ── Tool Approval Flow ──────────────────────────
+
+@app.route("/api/tools/pending")
+def list_pending():
+    return jsonify({"pending": [
+        {"id": k, "path": v["path"], "tool": v["tool"], "diff": v["diff"][:2000], "timestamp": v["timestamp"]}
+        for k, v in PENDING_EDITS.items()
+    ]})
+
+
+@app.route("/api/tools/approve", methods=["POST"])
+def approve_edit():
+    edit_id = request.json.get("id", "")
+    edit = PENDING_EDITS.pop(edit_id, None)
+    if not edit:
+        return jsonify({"error": "Pending edit not found"}), 404
+    try:
+        FILE_EDIT_HISTORY.append({"path": edit["path"], "old_content": edit["old_content"], "new_content": edit["new_content"], "tool": edit["tool"], "timestamp": time.time()})
+        if len(FILE_EDIT_HISTORY) > MAX_UNDO_HISTORY:
+            FILE_EDIT_HISTORY.pop(0)
+        os.makedirs(os.path.dirname(edit["path"]) or ".", exist_ok=True)
+        with open(edit["path"], "w", encoding="utf-8") as f:
+            f.write(edit["new_content"])
+        return jsonify({"success": True, "path": edit["path"]})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/tools/reject", methods=["POST"])
+def reject_edit():
+    edit_id = request.json.get("id", "")
+    edit = PENDING_EDITS.pop(edit_id, None)
+    if not edit:
+        return jsonify({"error": "Pending edit not found"}), 404
+    return jsonify({"success": True, "rejected": edit["path"]})
+
+
+@app.route("/api/settings/approval", methods=["POST"])
+def set_approval():
+    global REQUIRE_APPROVAL
+    REQUIRE_APPROVAL = request.json.get("enabled", False)
+    return jsonify({"require_approval": REQUIRE_APPROVAL})
+
+
+# ── Streaming Terminal ──────────────────────────
+
+@app.route("/api/terminal/stream", methods=["POST"])
+def terminal_stream():
+    command = request.json.get("command", "")
+    cwd = request.json.get("cwd", WORKSPACE)
+
+    def generate():
+        try:
+            proc = subprocess.Popen(
+                command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, cwd=cwd, bufsize=1
+            )
+            for line in iter(proc.stdout.readline, ""):
+                yield f"data: {json.dumps({'type': 'output', 'text': line})}\n\n"
+            proc.wait(timeout=120)
+            yield f"data: {json.dumps({'type': 'exit', 'code': proc.returncode})}\n\n"
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            yield f"data: {json.dumps({'type': 'error', 'text': 'Command timed out (120s)'})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'text': str(e)})}\n\n"
+
+    return Response(stream_with_context(generate()), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+# ── File Watcher ──────────────────────────────
+
+@app.route("/api/files/mtime", methods=["POST"])
+def file_mtime():
+    paths = request.json.get("paths", [])
+    changed = []
+    for p in paths:
+        try:
+            mtime = os.path.getmtime(p)
+            if p in FILE_MTIMES and FILE_MTIMES[p] < mtime:
+                changed.append({"path": p, "mtime": mtime})
+            FILE_MTIMES[p] = mtime
+        except Exception:
+            pass
+    return jsonify({"changed": changed})
+
+
+# ── MCP Server Support ──────────────────────────
+
+@app.route("/api/mcp/servers", methods=["GET", "POST", "DELETE"])
+def mcp_servers():
+    global MCP_SERVERS
+    if request.method == "POST":
+        data = request.json
+        server = {"name": data.get("name", ""), "url": data.get("url", ""), "tools": []}
+        try:
+            r = requests.post(server["url"], json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, timeout=10)
+            if r.ok:
+                tools = r.json().get("result", {}).get("tools", [])
+                server["tools"] = tools
+        except Exception:
+            pass
+        MCP_SERVERS.append(server)
+        return jsonify({"success": True, "server": server})
+    if request.method == "DELETE":
+        name = request.args.get("name", "")
+        MCP_SERVERS = [s for s in MCP_SERVERS if s["name"] != name]
+        return jsonify({"success": True})
+    return jsonify({"servers": MCP_SERVERS})
+
+
+@app.route("/api/mcp/invoke", methods=["POST"])
+def mcp_invoke():
+    data = request.json
+    server_name = data.get("server", "")
+    tool_name = data.get("tool", "")
+    tool_args = data.get("args", {})
+    server = next((s for s in MCP_SERVERS if s["name"] == server_name), None)
+    if not server:
+        return jsonify({"error": "MCP server not found"}), 404
+    try:
+        r = requests.post(server["url"], json={
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": tool_name, "arguments": tool_args}
+        }, timeout=30)
+        return jsonify(r.json().get("result", {}))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
 
 
 if __name__ == "__main__":

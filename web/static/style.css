@@ -1059,4 +1059,96 @@ textarea::placeholder { color: var(--text-dim); }
 /* Nav row layout */
 .nav-row { margin-bottom: 0; }
 
+/* Approve / Reject buttons */
+.approve-btn {
+  background: rgba(78, 201, 78, 0.15); border: 1px solid #4ec94e;
+  color: #4ec94e; font-size: 11px; padding: 3px 12px; border-radius: 4px;
+  cursor: pointer; margin-left: 8px; transition: all 0.15s;
+}
+.approve-btn:hover { background: rgba(78, 201, 78, 0.3); }
+.reject-btn {
+  background: rgba(204, 68, 68, 0.15); border: 1px solid #cc4444;
+  color: #cc4444; font-size: 11px; padding: 3px 12px; border-radius: 4px;
+  cursor: pointer; margin-left: 4px; transition: all 0.15s;
+}
+.reject-btn:hover { background: rgba(204, 68, 68, 0.3); }
+.pending-badge {
+  display: inline-block; margin-left: 8px; padding: 2px 8px;
+  background: rgba(170, 136, 0, 0.2); border: 1px solid #aa8800;
+  border-radius: 4px; color: #aa8800; font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.diff-pending { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+
+/* Fork Tree */
+.fork-tree {
+  padding: 4px 0; border-top: 1px solid var(--border); margin-top: 4px;
+}
+.fork-tree:empty { display: none; }
+.fork-node {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 8px; font-size: 12px; color: var(--text-secondary);
+  cursor: pointer; border-radius: 4px; transition: background 0.1s;
+}
+.fork-node:hover { background: var(--bg-hover); color: var(--text-primary); }
+.fork-node.fork-active { color: var(--text-primary); background: var(--bg-active); }
+.fork-dot { font-size: 10px; color: var(--text-dim); flex-shrink: 0; }
+.fork-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* MCP Server UI */
+.mcp-server-list { margin-bottom: 8px; }
+.mcp-server {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; background: var(--bg-tertiary); border: 1px solid var(--border-light);
+  border-radius: 6px; margin-bottom: 4px; font-size: 12px;
+}
+.mcp-name { color: var(--text-primary); font-weight: 500; flex: 1; }
+.mcp-tools { color: var(--text-dim); font-size: 11px; }
+.mcp-remove {
+  background: none; border: none; color: var(--text-dim); font-size: 14px;
+  cursor: pointer; padding: 0 4px;
+}
+.mcp-remove:hover { color: #cc4444; }
+.mcp-empty { padding: 8px 10px; color: var(--text-dim); font-size: 12px; }
+.mcp-add-btn {
+  width: 100%; padding: 6px; background: transparent; border: 1px dashed var(--border-light);
+  border-radius: 6px; color: var(--text-dim); font-size: 12px; cursor: pointer;
+  transition: all 0.15s;
+}
+.mcp-add-btn:hover { background: var(--bg-hover); color: var(--text-secondary); border-color: var(--text-dim); }
+
+/* Diff Hunk Blocks */
+.diff-hunk-block {
+  border: 1px solid var(--border-light); border-radius: 6px;
+  margin: 8px 0; overflow: hidden;
+}
+.diff-hunk-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 4px 10px; background: rgba(102, 136, 204, 0.1);
+  font-size: 11px; color: #6688cc; font-family: "SF Mono", monospace;
+  border-bottom: 1px solid var(--border);
+}
+.diff-hunk-content {
+  font-family: "SF Mono", monospace; font-size: 12px; line-height: 1.5;
+}
+
+/* Editor Syntax Highlight Overlay */
+.editor-pane-wrap {
+  position: relative; flex: 1; min-width: 0; min-height: 0; overflow: hidden;
+}
+.editor-highlight {
+  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+  padding: 16px; margin: 0;
+  font-family: "SF Mono", "Cascadia Code", "JetBrains Mono", "Fira Code", monospace;
+  font-size: 13px; line-height: 1.6; tab-size: 4;
+  color: var(--text-primary); background: var(--code-bg);
+  overflow: auto; white-space: pre-wrap; word-wrap: break-word;
+  pointer-events: none; z-index: 1;
+}
+.editor-pane-wrap .editor-content {
+  position: relative; z-index: 2;
+  background: transparent; color: transparent; caret-color: var(--text-primary);
+}
+.editor-pane-wrap .editor-content::selection { background: rgba(200, 200, 200, 0.3); }
+
 .hljs { background: transparent !important; padding: 0 !important; }
