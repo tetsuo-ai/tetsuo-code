@@ -100,6 +100,8 @@
         <div class="shortcut-row"><kbd>Escape</kbd><span>Cancel / close</span></div>
         <div class="shortcut-row"><kbd>@filename</kbd><span>Mention file</span></div>
         <div class="shortcut-row"><kbd>j / k</kbd><span>Navigate file tree</span></div>
+        <div class="shortcut-row"><kbd>Ctrl+D</kbd><span>Select next occurrence</span></div>
+        <div class="shortcut-row"><kbd>Tab</kbd><span>Accept ghost completion</span></div>
       </div>
     </div>
   </div>
@@ -310,6 +312,8 @@
       <div class="editor-tabs" id="editorTabs"></div>
       <div class="editor-toolbar">
         <button class="editor-btn" onclick="toggleEditorFind()">find</button>
+        <button class="editor-btn" onclick="toggleGitBlame()">blame</button>
+        <button class="editor-btn" onclick="showFileHistory()">history</button>
         <button class="editor-btn" onclick="toggleSplitEditor()">split</button>
         <button class="editor-btn" onclick="saveCurrentTab()">save</button>
         <button class="editor-btn" onclick="closeEditor()">&times;</button>
@@ -324,14 +328,55 @@
         <button class="editor-find-close" onclick="toggleEditorFind()">&times;</button>
       </div>
       <div class="editor-panes">
+        <div class="blame-gutter hidden" id="blameGutter"></div>
         <div class="editor-pane-wrap">
           <pre class="editor-highlight" id="editorHighlight"></pre>
+          <div class="editor-ghost hidden" id="editorGhost"></div>
           <textarea class="editor-content" id="editorContent" spellcheck="false"></textarea>
         </div>
         <textarea class="editor-content editor-split hidden" id="editorContentSplit" spellcheck="false"></textarea>
       </div>
+      <div class="diagnostics-bar hidden" id="diagnosticsBar"></div>
       <div class="editor-minimap" id="editorMinimap"></div>
     </div>
+
+    <!-- Hover Tooltip -->
+    <div class="hover-tooltip hidden" id="hoverTooltip"></div>
+
+    <!-- File History Panel -->
+    <div class="file-history-panel hidden" id="fileHistoryPanel">
+      <div class="file-history-header">
+        <span>file history</span>
+        <button onclick="document.getElementById('fileHistoryPanel').classList.add('hidden')">&times;</button>
+      </div>
+      <div class="file-history-list" id="fileHistoryList"></div>
+    </div>
+
+    <!-- Test Runner Panel -->
+    <div class="test-runner-panel hidden" id="testRunnerPanel">
+      <div class="test-runner-header">
+        <span>test runner</span>
+        <button onclick="document.getElementById('testRunnerPanel').classList.add('hidden')">&times;</button>
+      </div>
+      <div class="test-runner-controls">
+        <input type="text" id="testRunnerCmd" placeholder="test command..." value="python -m pytest -v">
+        <button class="test-run-btn" onclick="runAllTests()">run all</button>
+      </div>
+      <div class="test-file-list" id="testFileList"></div>
+      <div class="test-output" id="testOutput"></div>
+    </div>
+
+    <!-- Review Panel -->
+    <div class="review-panel hidden" id="reviewPanel">
+      <div class="review-header">
+        <span>code review</span>
+        <button onclick="document.getElementById('reviewPanel').classList.add('hidden')">&times;</button>
+      </div>
+      <div class="review-file-list" id="reviewFileList"></div>
+    </div>
+
+    <!-- Smart Suggestions Menu -->
+    <div class="smart-suggest-menu hidden" id="smartSuggestMenu"></div>
 
     <!-- Main -->
     <main class="chat-area" id="chatArea">
@@ -343,6 +388,9 @@
         <div class="header-actions">
           <button class="header-btn" onclick="undoLastEdit()" title="Undo last AI edit">undo</button>
           <button class="header-btn" onclick="pinMessage()" title="Pin last message">pin</button>
+          <button class="header-btn" onclick="openTestRunner()" title="Test runner">tests</button>
+          <button class="header-btn" onclick="openReviewPanel()" title="Review changes">review</button>
+          <button class="header-btn" onclick="getSmartSuggestions()" title="Smart suggestions">suggest</button>
           <button class="header-btn" onclick="summarizeChat()" title="Summarize conversation">summarize</button>
           <button class="header-btn" onclick="toggleTerminal()" title="Toggle terminal">terminal</button>
         </div>

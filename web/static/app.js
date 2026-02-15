@@ -77,6 +77,8 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "`" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); toggleTerminal(); }
   if (e.key === "/" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); openShortcuts(); }
   if (e.key === "z" && (e.ctrlKey || e.metaKey) && !e.shiftKey && document.activeElement !== inputEl && document.activeElement.tagName !== "TEXTAREA") { e.preventDefault(); undoLastEdit(); }
+  if (e.key === "d" && (e.ctrlKey || e.metaKey) && document.activeElement === document.getElementById("editorContent")) { e.preventDefault(); selectNextOccurrence(); }
+  if (e.key === "d" && (e.ctrlKey || e.metaKey) && e.shiftKey && document.activeElement === document.getElementById("editorContent")) { e.preventDefault(); selectAllOccurrences(); }
 });
 
 messagesEl.addEventListener("scroll", () => { const {scrollTop,scrollHeight,clientHeight}=messagesEl; autoScroll=scrollHeight-scrollTop-clientHeight<60; });
@@ -192,6 +194,13 @@ const PALETTE_COMMANDS = [
   {name:"Change Workspace",action:()=>changeWorkspace()},
   {name:"Clear Terminal",action:()=>clearTerminal()},
   {name:"Empty Trash",action:()=>emptyTrash()},
+  {name:"Run Tests",action:()=>openTestRunner()},
+  {name:"Review Changes",action:()=>openReviewPanel()},
+  {name:"Git Blame",action:()=>toggleGitBlame()},
+  {name:"File History",action:()=>showFileHistory()},
+  {name:"Smart Suggestions",action:()=>getSmartSuggestions()},
+  {name:"Build Index",action:()=>buildWorkspaceIndex()},
+  {name:"Select Next Occurrence",key:"Ctrl+D",action:()=>selectNextOccurrence()},
 ];
 function openPalette(){document.getElementById("paletteOverlay").classList.remove("hidden");document.getElementById("paletteInput").value="";filterPalette("");document.getElementById("paletteInput").focus()}
 function closePalette(){document.getElementById("paletteOverlay").classList.add("hidden")}
@@ -327,7 +336,7 @@ async function openInEditor(path){
 function renderEditorTabs(){
   const tabs=document.getElementById("editorTabs");tabs.innerHTML=editorTabs.map((t,i)=>{const name=t.path.split("/").pop().split("\\").pop();const modified=t.content!==t.original?"*":"";return`<div class="editor-tab${t.active?" active":""}" onclick="activateTab(${i})"><span>${escapeHtml(name)}${modified}</span><button class="editor-tab-close" onclick="event.stopPropagation();closeTab(${i})">&times;</button></div>`}).join("");
   const active=editorTabs.find(t=>t.active);const ed=document.getElementById("editorContent");
-  if(active){ed.value=active.content;ed.oninput=()=>{active.content=ed.value;renderEditorTabs();updateMinimap();updateEditorHighlight()};ed.onscroll=()=>syncEditorScroll();updateMinimap();updateEditorHighlight()}
+  if(active){ed.value=active.content;ed.oninput=()=>{active.content=ed.value;renderEditorTabs();updateMinimap();updateEditorHighlight();scheduleLint()};ed.onscroll=()=>syncEditorScroll();updateMinimap();updateEditorHighlight();scheduleLint()}
   const splitEl=document.getElementById("editorContentSplit");if(splitMode&&splitTab){splitEl.classList.remove("hidden");splitEl.value=splitTab.content;splitEl.oninput=()=>{splitTab.content=splitEl.value;renderEditorTabs()}}else{splitEl.classList.add("hidden")}
   renderBreadcrumb(); saveSessionState();
 }
@@ -689,5 +698,168 @@ async function removeMcpServer(name){
   try{await fetch(`/api/mcp/servers?name=${encodeURIComponent(name)}`,{method:"DELETE"});loadMcpServers();showNotification(`Removed "${name}"`)}catch(e){}
 }
 
+// ── Ghost Text / Inline Completions ──────────────
+let _ghostDebounce=null,_ghostText="";
+function setupGhostText(){
+  const ed=document.getElementById("editorContent");
+  ed.addEventListener("input",()=>{clearTimeout(_ghostDebounce);_ghostText="";updateGhostDisplay();_ghostDebounce=setTimeout(fetchGhostCompletion,1200)});
+  ed.addEventListener("keydown",(e)=>{if(e.key==="Tab"&&_ghostText){e.preventDefault();acceptGhostText();return}if(e.key==="Escape"&&_ghostText){_ghostText="";updateGhostDisplay()}});
+}
+async function fetchGhostCompletion(){
+  const ed=document.getElementById("editorContent");const active=editorTabs.find(t=>t.active);
+  if(!active||!ed.value||ed.value.length<20)return;
+  const line=ed.value.substring(0,ed.selectionStart).split("\n").length;
+  try{const r=await fetch("/api/complete",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({code:ed.value,line,path:active.path,provider:settings.provider,api_key:settings.api_key,model:document.getElementById("modelSelect").value})});
+    const d=await r.json();if(d.completion&&d.completion.length>2){_ghostText=d.completion;updateGhostDisplay()}
+  }catch(e){}
+}
+function acceptGhostText(){
+  if(!_ghostText)return;const ed=document.getElementById("editorContent");
+  const pos=ed.selectionStart;ed.value=ed.value.substring(0,pos)+_ghostText+ed.value.substring(pos);
+  ed.selectionStart=ed.selectionEnd=pos+_ghostText.length;
+  const active=editorTabs.find(t=>t.active);if(active)active.content=ed.value;
+  _ghostText="";updateGhostDisplay();updateEditorHighlight();
+}
+function updateGhostDisplay(){
+  const ghost=document.getElementById("editorGhost");if(!ghost)return;
+  if(!_ghostText){ghost.textContent="";ghost.classList.add("hidden");return}
+  ghost.classList.remove("hidden");ghost.textContent=_ghostText;
+}
+
+// ── Test Runner ──────────────────────────
+function openTestRunner(){document.getElementById("testRunnerPanel").classList.toggle("hidden");if(!document.getElementById("testRunnerPanel").classList.contains("hidden"))detectTests()}
+async function detectTests(){
+  try{const r=await fetch("/api/tests/detect");const d=await r.json();
+    document.getElementById("testRunnerCmd").value=d.runner||"python -m pytest -v";
+    const list=document.getElementById("testFileList");
+    list.innerHTML=(d.files||[]).map(f=>`<div class="test-file-item" onclick="runSingleTest('${f.path.replace(/'/g,"\\'")}')">${escapeHtml(f.rel)}</div>`).join("")||'<div class="test-empty">no test files found</div>';
+  }catch(e){}
+}
+async function runSingleTest(path){const cmd=document.getElementById("testRunnerCmd").value;runTestCmd(path?`${cmd} ${path}`:cmd)}
+function runAllTests(){runTestCmd(document.getElementById("testRunnerCmd").value)}
+async function runTestCmd(cmd){
+  const out=document.getElementById("testOutput");out.innerHTML=`<div class="term-cmd">$ ${escapeHtml(cmd)}</div>`;
+  try{const r=await fetch("/api/tests/run",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({command:cmd})});
+    const reader=r.body.getReader();const decoder=new TextDecoder();let buffer="";
+    while(true){const{done,value}=await reader.read();if(done)break;
+      buffer+=decoder.decode(value,{stream:true});const lines=buffer.split("\n");buffer=lines.pop();
+      for(const line of lines){if(!line.startsWith("data: "))continue;
+        try{const d=JSON.parse(line.slice(6));
+          if(d.type==="output")out.innerHTML+=formatTerminalOutput(d.text);
+          else if(d.type==="exit")out.innerHTML+=`\n<span class="${d.code===0?'test-pass':'test-fail'}">[exit ${d.code}]</span>`;
+        }catch(e){}}out.scrollTop=out.scrollHeight}
+  }catch(e){out.innerHTML+=`<span class="test-fail">Error: ${escapeHtml(e.message)}</span>`}
+}
+
+// ── Git Blame & File History ──────────────────────
+let blameVisible=false;
+async function toggleGitBlame(){
+  blameVisible=!blameVisible;const gutter=document.getElementById("blameGutter");
+  if(!blameVisible){gutter.classList.add("hidden");gutter.innerHTML="";return}
+  const active=editorTabs.find(t=>t.active);if(!active){blameVisible=false;return}
+  try{const r=await fetch(`/api/git/blame?path=${encodeURIComponent(active.path)}`);const d=await r.json();
+    if(d.error){showNotification(d.error,"error");blameVisible=false;return}
+    gutter.classList.remove("hidden");
+    gutter.innerHTML=(d.blame||[]).map(b=>`<div class="blame-line" title="${escapeHtml(b.summary||'')}"><span class="blame-author">${escapeHtml((b.author||'').slice(0,10))}</span> <span class="blame-hash">${b.hash||''}</span></div>`).join("");
+  }catch(e){blameVisible=false}
+}
+async function showFileHistory(){
+  const active=editorTabs.find(t=>t.active);if(!active)return;
+  try{const r=await fetch(`/api/git/file-log?path=${encodeURIComponent(active.path)}`);const d=await r.json();
+    const list=document.getElementById("fileHistoryList");
+    list.innerHTML=(d.commits||[]).map(c=>`<div class="history-item"><span class="history-hash">${c.hash}</span><span class="history-msg">${escapeHtml(c.message)}</span></div>`).join("")||'<div class="test-empty">no history</div>';
+    document.getElementById("fileHistoryPanel").classList.remove("hidden");
+  }catch(e){}
+}
+
+// ── Linting / Syntax Check ──────────────────────
+let _lintDebounce=null;
+function scheduleLint(){clearTimeout(_lintDebounce);_lintDebounce=setTimeout(runLint,2000)}
+async function runLint(){
+  const active=editorTabs.find(t=>t.active);if(!active)return;
+  try{const r=await fetch("/api/lint",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({path:active.path,content:active.content})});
+    const d=await r.json();renderDiagnostics(d.diagnostics||[]);
+  }catch(e){}
+}
+function renderDiagnostics(diags){
+  const bar=document.getElementById("diagnosticsBar");
+  if(!diags.length){bar.classList.add("hidden");bar.innerHTML="";return}
+  bar.classList.remove("hidden");
+  bar.innerHTML=diags.map(d=>`<div class="diag-item diag-${d.severity}" onclick="jumpToLine(${d.line})"><span class="diag-pos">L${d.line}:${d.col}</span><span class="diag-msg">${escapeHtml(d.message)}</span></div>`).join("");
+}
+
+// ── Multi-Cursor (Ctrl+D select next) ──────────────
+function selectNextOccurrence(){
+  const ed=document.getElementById("editorContent");
+  const sel=ed.value.substring(ed.selectionStart,ed.selectionEnd);if(!sel)return;
+  const after=ed.value.indexOf(sel,ed.selectionEnd);
+  if(after!==-1){ed.selectionStart=after;ed.selectionEnd=after+sel.length;
+    ed.scrollTop=(ed.value.substring(0,after).split("\n").length-1)*18}
+  else{const first=ed.value.indexOf(sel);if(first!==-1){ed.selectionStart=first;ed.selectionEnd=first+sel.length}}
+}
+function selectAllOccurrences(){
+  const ed=document.getElementById("editorContent");
+  const sel=ed.value.substring(ed.selectionStart,ed.selectionEnd);if(!sel)return;
+  const count=ed.value.split(sel).length-1;
+  showNotification(`${count} occurrences of "${sel.slice(0,20)}"`);
+  document.getElementById("editorFindInput").value=sel;editorFind();
+  if(document.getElementById("editorFindBar").classList.contains("hidden"))toggleEditorFind();
+}
+
+// ── Context-Aware Smart Suggestions ──────────────
+async function getSmartSuggestions(){
+  const active=editorTabs.find(t=>t.active);const ed=document.getElementById("editorContent");
+  const selection=ed?ed.value.substring(ed.selectionStart,ed.selectionEnd):"";
+  try{const r=await fetch("/api/suggest-prompts",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({selection,path:active?active.path:""})});
+    const d=await r.json();renderSmartSuggestions(d.suggestions||[]);
+  }catch(e){}
+}
+function renderSmartSuggestions(suggestions){
+  const menu=document.getElementById("smartSuggestMenu");if(!menu)return;
+  if(!suggestions.length){menu.classList.add("hidden");return}
+  menu.classList.remove("hidden");
+  menu.innerHTML=suggestions.map(s=>`<div class="smart-suggest-item" onclick="useSmartSuggestion(this)" data-text="${escapeHtml(s.text)}"><span class="smart-cat">${s.category}</span>${escapeHtml(s.text.slice(0,60))}</div>`).join("");
+}
+function useSmartSuggestion(el){inputEl.value=el.dataset.text;inputEl.style.height=Math.min(inputEl.scrollHeight,200)+"px";inputEl.focus();document.getElementById("smartSuggestMenu").classList.add("hidden")}
+
+// ── Review Panel ──────────────────────────
+async function openReviewPanel(){
+  const panel=document.getElementById("reviewPanel");panel.classList.toggle("hidden");
+  if(panel.classList.contains("hidden"))return;
+  try{const r=await fetch("/api/review/changes");const d=await r.json();
+    const list=document.getElementById("reviewFileList");
+    const changes=[...(d.changes||[]),...(d.pending||[]).map(p=>({...p,status:"AI"}))];
+    if(!changes.length){list.innerHTML='<div class="review-empty">no changes to review</div>';return}
+    list.innerHTML=changes.map(c=>{
+      const diffHtml=c.diff?c.diff.split("\n").map(l=>{if(l.startsWith("+"))return`<span class="diff-add">${escapeHtml(l)}</span>`;if(l.startsWith("-"))return`<span class="diff-del">${escapeHtml(l)}</span>`;if(l.startsWith("@@"))return`<span class="diff-hunk">${escapeHtml(l)}</span>`;return escapeHtml(l)}).join("\n"):"no diff";
+      return`<div class="review-file"><div class="review-file-header" onclick="this.nextElementSibling.classList.toggle('hidden')"><span class="review-status-badge">${escapeHtml(c.status)}</span><span class="review-path">${escapeHtml(c.path)}</span>${c.staged?'<span class="review-staged">staged</span>':''}</div><div class="review-diff hidden"><pre>${diffHtml}</pre></div></div>`}).join("");
+  }catch(e){document.getElementById("reviewFileList").innerHTML='<div class="review-empty">failed to load</div>'}
+}
+
+// ── AI Hover Tooltip ──────────────────────
+function setupHoverTooltip(){
+  const ed=document.getElementById("editorContent");
+  ed.addEventListener("dblclick",()=>{const sel=ed.value.substring(ed.selectionStart,ed.selectionEnd);if(sel&&sel.length<40&&!sel.includes("\n"))showHoverInfo(sel)});
+}
+function showHoverInfo(symbol){
+  const tip=document.getElementById("hoverTooltip");const active=editorTabs.find(t=>t.active);if(!active)return;
+  const lines=active.content.split("\n");let defLine=null;
+  const escaped=symbol.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+  for(let i=0;i<lines.length;i++){if(lines[i].match(new RegExp(`(?:def|function|class|const|let|var|type|interface)\\s+${escaped}\\b`))){defLine=i+1;break}}
+  const ext=active.ext||active.path.split(".").pop();
+  tip.innerHTML=`<div class="hover-symbol">${escapeHtml(symbol)}</div><div class="hover-detail">${ext} · ${active.path.split("/").pop()}${defLine?' · defined L'+defLine:''}</div>`;
+  tip.classList.remove("hidden");setTimeout(()=>tip.classList.add("hidden"),4000);
+}
+
+// ── Workspace Indexing ──────────────────────
+async function buildWorkspaceIndex(){
+  showNotification("Indexing workspace...");
+  try{const r=await fetch("/api/index/build",{method:"POST"});const d=await r.json();
+    showNotification(`Indexed ${d.indexed} files`)}catch(e){showNotification("Index failed","error")}
+}
+
 // ── Init ──────────────────────────────
-(async function(){loadTheme();const ok=await checkAuth();if(ok)loadState();inputEl.focus();startFileWatcher()})();
+(async function(){loadTheme();const ok=await checkAuth();if(ok)loadState();inputEl.focus();startFileWatcher();setupGhostText();setupHoverTooltip()})();

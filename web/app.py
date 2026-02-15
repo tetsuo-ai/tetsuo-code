@@ -1434,6 +1434,301 @@ def mcp_invoke():
         return jsonify({"error": str(e)}), 400
 
 
+# ── Inline Completions (Ghost Text) ──────────────
+
+@app.route("/api/complete", methods=["POST"])
+def inline_complete():
+    data = request.json
+    code = data.get("code", "")
+    cursor_line = data.get("line", 0)
+    path = data.get("path", "")
+    provider_id = data.get("provider", "xai")
+    user_api_key = data.get("api_key", "")
+    model = data.get("model", "grok-3-mini")
+
+    provider = PROVIDERS.get(provider_id, PROVIDERS["xai"])
+    api_key = user_api_key or os.environ.get(provider.get("env_key", ""), "") or API_KEY
+    if not api_key and provider_id != "ollama":
+        return jsonify({"completion": ""})
+
+    lines = code.split("\n")
+    start = max(0, cursor_line - 40)
+    end = min(len(lines), cursor_line + 3)
+    context = "\n".join(lines[start:end])
+    ext = os.path.splitext(path)[1].lstrip(".")
+    prompt = f"Complete the following {ext} code. Output ONLY the completion (1-3 lines), no explanation, no markdown, no backticks.\n\n{context}"
+
+    try:
+        if provider["format"] == "anthropic":
+            r = requests.post("https://api.anthropic.com/v1/messages",
+                headers={"Content-Type": "application/json", "x-api-key": api_key, "anthropic-version": "2023-06-01"},
+                json={"model": model, "max_tokens": 150, "messages": [{"role": "user", "content": prompt}]}, timeout=10)
+            if r.ok:
+                content = r.json().get("content", [{}])
+                return jsonify({"completion": (content[0].get("text", "") if content else "").strip()})
+        else:
+            r = requests.post(f"{provider['base_url']}/chat/completions",
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+                json={"model": model, "messages": [{"role": "user", "content": prompt}], "max_tokens": 150, "temperature": 0.2}, timeout=10)
+            if r.ok:
+                choices = r.json().get("choices", [{}])
+                return jsonify({"completion": (choices[0].get("message", {}).get("content", "") if choices else "").strip()})
+    except Exception:
+        pass
+    return jsonify({"completion": ""})
+
+
+# ── Test Runner ──────────────────────────
+
+@app.route("/api/tests/detect")
+def detect_tests():
+    test_patterns = [r"test_.*\.py$", r".*_test\.py$", r".*\.test\.[jt]sx?$", r".*\.spec\.[jt]sx?$", r".*_test\.go$"]
+    test_files = []
+    skip_dirs = {".git", "node_modules", "__pycache__", "dist", "build", ".venv", "venv"}
+    for root, dirs, filenames in os.walk(WORKSPACE):
+        dirs[:] = [d for d in dirs if d not in skip_dirs]
+        for fn in filenames:
+            for pat in test_patterns:
+                if re.match(pat, fn, re.IGNORECASE):
+                    full = os.path.join(root, fn)
+                    rel = os.path.relpath(full, WORKSPACE).replace("\\", "/")
+                    test_files.append({"name": fn, "path": full.replace("\\", "/"), "rel": rel})
+                    break
+            if len(test_files) >= 100:
+                break
+    runner = None
+    if os.path.exists(os.path.join(WORKSPACE, "pytest.ini")) or os.path.exists(os.path.join(WORKSPACE, "setup.py")) or os.path.exists(os.path.join(WORKSPACE, "pyproject.toml")):
+        runner = "python -m pytest -v"
+    elif os.path.exists(os.path.join(WORKSPACE, "package.json")):
+        runner = "npm test"
+    elif os.path.exists(os.path.join(WORKSPACE, "go.mod")):
+        runner = "go test ./..."
+    elif os.path.exists(os.path.join(WORKSPACE, "Cargo.toml")):
+        runner = "cargo test"
+    return jsonify({"files": test_files, "runner": runner})
+
+
+@app.route("/api/tests/run", methods=["POST"])
+def run_tests():
+    data = request.json
+    command = data.get("command", "python -m pytest -v")
+    def generate():
+        try:
+            proc = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    text=True, cwd=WORKSPACE, bufsize=1)
+            for line in iter(proc.stdout.readline, ""):
+                yield f"data: {json.dumps({'type': 'output', 'text': line})}\n\n"
+            proc.wait(timeout=120)
+            yield f"data: {json.dumps({'type': 'exit', 'code': proc.returncode})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'text': str(e)})}\n\n"
+    return Response(stream_with_context(generate()), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+# ── Git Blame & File History ──────────────────────
+
+@app.route("/api/git/blame")
+def git_blame():
+    path = request.args.get("path", "")
+    if not path:
+        return jsonify({"error": "path required"}), 400
+    try:
+        rel = os.path.relpath(path, WORKSPACE).replace("\\", "/")
+        result = subprocess.run(["git", "blame", "--porcelain", rel],
+            capture_output=True, text=True, timeout=15, cwd=WORKSPACE)
+        if result.returncode != 0:
+            return jsonify({"error": result.stderr.strip() or "git blame failed"}), 400
+        lines = result.stdout.splitlines()
+        blame = []
+        current = {}
+        for line in lines:
+            if line.startswith("\t"):
+                current["text"] = line[1:]
+                blame.append(current)
+                current = {}
+            elif not current:
+                parts = line.split()
+                if len(parts) >= 3:
+                    current = {"hash": parts[0][:8], "line": int(parts[2])}
+            elif line.startswith("author "):
+                current["author"] = line[7:]
+            elif line.startswith("author-time "):
+                current["time"] = int(line[12:])
+            elif line.startswith("summary "):
+                current["summary"] = line[8:]
+        return jsonify({"blame": blame[:5000]})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/git/file-log")
+def git_file_log():
+    path = request.args.get("path", "")
+    if not path:
+        return jsonify({"error": "path required"}), 400
+    try:
+        rel = os.path.relpath(path, WORKSPACE).replace("\\", "/")
+        result = subprocess.run(["git", "log", "--oneline", "-20", "--", rel],
+            capture_output=True, text=True, timeout=10, cwd=WORKSPACE)
+        commits = []
+        for line in result.stdout.splitlines():
+            parts = line.split(" ", 1)
+            if len(parts) == 2:
+                commits.append({"hash": parts[0], "message": parts[1]})
+        return jsonify({"commits": commits})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+# ── Linting / Syntax Check ──────────────────────
+
+@app.route("/api/lint", methods=["POST"])
+def lint_file():
+    data = request.json
+    path = data.get("path", "")
+    content = data.get("content", "")
+    ext = os.path.splitext(path)[1].lower() if path else ""
+    diagnostics = []
+    if ext == ".py":
+        try:
+            compile(content, path or "<string>", "exec")
+        except SyntaxError as e:
+            diagnostics.append({"line": e.lineno or 1, "col": e.offset or 0, "message": str(e.msg), "severity": "error"})
+    elif ext in (".js", ".ts", ".jsx", ".tsx"):
+        stack = []
+        pairs = {"{": "}", "[": "]", "(": ")"}
+        in_str = False
+        sch = None
+        for i, line in enumerate(content.split("\n"), 1):
+            for j, ch in enumerate(line):
+                if in_str:
+                    if ch == sch and (j == 0 or line[j-1] != "\\"):
+                        in_str = False
+                    continue
+                if ch in ("'", '"', '`'):
+                    in_str = True
+                    sch = ch
+                elif ch in pairs:
+                    stack.append((ch, i, j))
+                elif ch in pairs.values():
+                    if stack and pairs.get(stack[-1][0]) == ch:
+                        stack.pop()
+                    else:
+                        diagnostics.append({"line": i, "col": j, "message": f"Unexpected '{ch}'", "severity": "error"})
+        for (ch, ln, col) in stack:
+            diagnostics.append({"line": ln, "col": col, "message": f"Unclosed '{ch}'", "severity": "error"})
+    elif ext == ".json":
+        try:
+            json.loads(content)
+        except json.JSONDecodeError as e:
+            diagnostics.append({"line": e.lineno, "col": e.colno, "message": e.msg, "severity": "error"})
+    return jsonify({"diagnostics": diagnostics, "path": path})
+
+
+# ── Smart Prompt Suggestions ──────────────────────
+
+@app.route("/api/suggest-prompts", methods=["POST"])
+def suggest_prompts():
+    data = request.json
+    selection = data.get("selection", "")
+    path = data.get("path", "")
+    error_text = data.get("error", "")
+    ext = os.path.splitext(path)[1].lower() if path else ""
+    suggestions = []
+    if error_text:
+        suggestions.append({"text": f"Fix this error: {error_text[:100]}", "category": "fix"})
+        suggestions.append({"text": f"Explain this error: {error_text[:100]}", "category": "explain"})
+    if selection:
+        suggestions.extend([
+            {"text": f"Explain this code:\n```\n{selection[:500]}\n```", "category": "explain"},
+            {"text": f"Refactor this code:\n```\n{selection[:500]}\n```", "category": "refactor"},
+            {"text": f"Write tests for:\n```\n{selection[:500]}\n```", "category": "test"},
+            {"text": f"Add error handling:\n```\n{selection[:500]}\n```", "category": "fix"},
+        ])
+        if "def " in selection or "function " in selection:
+            suggestions.append({"text": f"Optimize performance:\n```\n{selection[:500]}\n```", "category": "perf"})
+    if ext == ".py":
+        suggestions.extend([{"text": "Add type hints to all functions", "category": "improve"}, {"text": "Add docstrings", "category": "docs"}])
+    elif ext in (".js", ".ts"):
+        suggestions.extend([{"text": "Convert to TypeScript with types", "category": "improve"}, {"text": "Add JSDoc comments", "category": "docs"}])
+    if not suggestions:
+        suggestions = [{"text": "Explain this codebase", "category": "explain"}, {"text": "Find bugs in this file", "category": "fix"}, {"text": "Suggest improvements", "category": "improve"}]
+    return jsonify({"suggestions": suggestions[:8]})
+
+
+# ── Review Panel ──────────────────────────
+
+@app.route("/api/review/changes")
+def review_changes():
+    try:
+        status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True, timeout=5, cwd=WORKSPACE).stdout
+        changes = []
+        for line in status.splitlines():
+            if len(line) < 4:
+                continue
+            xy = line[:2]
+            path = line[3:]
+            diff_r = subprocess.run(["git", "diff", "--", path], capture_output=True, text=True, timeout=10, cwd=WORKSPACE)
+            staged_r = subprocess.run(["git", "diff", "--cached", "--", path], capture_output=True, text=True, timeout=10, cwd=WORKSPACE)
+            changes.append({"path": path, "status": xy.strip(), "staged": xy[0] not in (" ", "?"), "diff": (diff_r.stdout + staged_r.stdout)[:5000]})
+        pending = [{"id": k, "path": os.path.basename(v["path"]), "diff": v["diff"][:3000], "type": "ai_edit"} for k, v in PENDING_EDITS.items()]
+        return jsonify({"changes": changes, "pending": pending})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+# ── Workspace Indexing ──────────────────────
+
+WORKSPACE_INDEX = {}
+
+@app.route("/api/index/build", methods=["POST"])
+def build_index():
+    global WORKSPACE_INDEX
+    WORKSPACE_INDEX = {}
+    count = 0
+    skip_dirs = {".git", "node_modules", "__pycache__", "dist", "build", ".venv", "venv"}
+    skip_ext = {".pyc", ".pyo", ".exe", ".dll", ".so", ".o", ".class", ".png", ".jpg", ".gif", ".ico", ".woff", ".woff2"}
+    for root, dirs, filenames in os.walk(WORKSPACE):
+        dirs[:] = [d for d in dirs if d not in skip_dirs and not d.startswith(".")]
+        for fn in filenames:
+            ext = os.path.splitext(fn)[1].lower()
+            if ext in skip_ext:
+                continue
+            full = os.path.join(root, fn)
+            rel = os.path.relpath(full, WORKSPACE).replace("\\", "/")
+            try:
+                with open(full, "r", encoding="utf-8", errors="replace") as f:
+                    content = f.read(50000)
+                words = set(re.findall(r'\b\w{3,}\b', content.lower()))
+                WORKSPACE_INDEX[rel] = {"tokens": words, "size": len(content)}
+                count += 1
+            except Exception:
+                continue
+            if count >= 500:
+                break
+        if count >= 500:
+            break
+    return jsonify({"indexed": count})
+
+
+@app.route("/api/index/search", methods=["POST"])
+def index_search():
+    query = request.json.get("query", "").lower()
+    if not query:
+        return jsonify({"results": []})
+    qtokens = set(re.findall(r'\b\w{3,}\b', query))
+    if not qtokens:
+        return jsonify({"results": []})
+    results = []
+    for path, info in WORKSPACE_INDEX.items():
+        overlap = qtokens & info["tokens"]
+        if overlap:
+            results.append({"path": path, "score": round(len(overlap) / len(qtokens), 2), "size": info["size"]})
+    results.sort(key=lambda x: x["score"], reverse=True)
+    return jsonify({"results": results[:20]})
+
+
 if __name__ == "__main__":
     if not API_KEY:
         print("WARNING: XAI_API_KEY not set. Set it before making requests.")
