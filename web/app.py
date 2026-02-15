@@ -694,6 +694,126 @@ def models():
     return {"models": ["grok-4-1-fast-reasoning", "grok-3-fast", "grok-3", "grok-3-mini"]}
 
 
+# ── Terminal ──────────────────────────────
+
+@app.route("/api/terminal", methods=["POST"])
+def terminal():
+    command = request.json.get("command", "")
+    cwd = request.json.get("cwd", WORKSPACE)
+    try:
+        result = subprocess.run(
+            command, shell=True, capture_output=True, text=True, timeout=30, cwd=cwd
+        )
+        out = result.stdout + result.stderr
+        if len(out) > 50000:
+            out = out[:50000] + "\n... [truncated]"
+        return jsonify({"output": out, "exit_code": result.returncode})
+    except subprocess.TimeoutExpired:
+        return jsonify({"output": "Command timed out", "exit_code": -1})
+    except Exception as e:
+        return jsonify({"output": str(e), "exit_code": -1})
+
+
+# ── Git ──────────────────────────────
+
+@app.route("/api/git/status")
+def git_status():
+    try:
+        branch = subprocess.run(
+            ["git", "branch", "--show-current"], capture_output=True, text=True, timeout=5, cwd=WORKSPACE
+        ).stdout.strip()
+        status = subprocess.run(
+            ["git", "status", "--porcelain"], capture_output=True, text=True, timeout=5, cwd=WORKSPACE
+        ).stdout
+        files = []
+        for line in status.splitlines():
+            if len(line) >= 4:
+                xy = line[:2]
+                path = line[3:]
+                staged = xy[0] not in (" ", "?")
+                files.append({"path": path, "status": xy.strip(), "staged": staged})
+        return jsonify({"branch": branch, "files": files})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/git/diff")
+def git_diff():
+    path = request.args.get("path", "")
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--", path] if path else ["git", "diff"],
+            capture_output=True, text=True, timeout=10, cwd=WORKSPACE
+        )
+        staged = subprocess.run(
+            ["git", "diff", "--cached", "--", path] if path else ["git", "diff", "--cached"],
+            capture_output=True, text=True, timeout=10, cwd=WORKSPACE
+        )
+        return jsonify({"diff": result.stdout + staged.stdout})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/git/stage", methods=["POST"])
+def git_stage():
+    files = request.json.get("files", [])
+    try:
+        subprocess.run(["git", "add"] + files, capture_output=True, text=True, timeout=10, cwd=WORKSPACE)
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/git/unstage", methods=["POST"])
+def git_unstage():
+    files = request.json.get("files", [])
+    try:
+        subprocess.run(["git", "reset", "HEAD"] + files, capture_output=True, text=True, timeout=10, cwd=WORKSPACE)
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/git/commit", methods=["POST"])
+def git_commit():
+    message = request.json.get("message", "")
+    if not message:
+        return jsonify({"error": "commit message required"}), 400
+    try:
+        result = subprocess.run(
+            ["git", "commit", "-m", message], capture_output=True, text=True, timeout=15, cwd=WORKSPACE
+        )
+        return jsonify({"output": result.stdout + result.stderr, "exit_code": result.returncode})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/git/push", methods=["POST"])
+def git_push():
+    try:
+        result = subprocess.run(
+            ["git", "push"], capture_output=True, text=True, timeout=30, cwd=WORKSPACE
+        )
+        return jsonify({"output": result.stdout + result.stderr, "exit_code": result.returncode})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+# ── File Save ──────────────────────────────
+
+@app.route("/api/files/save", methods=["POST"])
+def save_file():
+    path = request.json.get("path", "")
+    content = request.json.get("content", "")
+    try:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        return jsonify({"success": True, "path": path})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
 if __name__ == "__main__":
     if not API_KEY:
         print("WARNING: XAI_API_KEY not set. Set it before making requests.")

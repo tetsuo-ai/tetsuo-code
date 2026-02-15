@@ -26,7 +26,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.0/marked.min.js"></script>
 </head>
 <body>
-  <!-- Login overlay -->
+  <!-- Login -->
   <div class="login-overlay hidden" id="loginOverlay">
     <div class="login-box">
       <h2>tetsuocode</h2>
@@ -37,7 +37,15 @@
     </div>
   </div>
 
-  <!-- Search overlay -->
+  <!-- Command Palette -->
+  <div class="palette-overlay hidden" id="paletteOverlay" onclick="closePalette()">
+    <div class="palette-box" onclick="event.stopPropagation()">
+      <input type="text" id="paletteInput" placeholder="type a command..." oninput="filterPalette(this.value)">
+      <div class="palette-list" id="paletteList"></div>
+    </div>
+  </div>
+
+  <!-- Search -->
   <div class="search-overlay hidden" id="searchOverlay">
     <div class="search-box">
       <input type="text" id="searchInput" placeholder="search messages..." oninput="doSearch(this.value)">
@@ -46,30 +54,24 @@
     </div>
   </div>
 
-  <!-- File viewer -->
-  <div class="file-viewer hidden" id="fileViewer">
-    <div class="file-viewer-header">
-      <span id="fileViewerPath"></span>
-      <button onclick="closeFileViewer()">&times;</button>
-    </div>
-    <pre class="file-viewer-content"><code id="fileViewerContent"></code></pre>
-  </div>
-
   <div class="app">
     <div class="sidebar-overlay hidden" id="sidebarOverlay" onclick="toggleSidebar()"></div>
 
     <aside class="sidebar">
       <div class="sidebar-header">
         <span class="logo">tetsuocode</span>
+        <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="4" stroke="currentColor" stroke-width="1.5"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </button>
       </div>
 
-      <!-- Sidebar tabs -->
       <div class="sidebar-tabs">
         <button class="sidebar-tab active" onclick="switchTab('chats')" id="tabChats">chats</button>
         <button class="sidebar-tab" onclick="switchTab('files')" id="tabFiles">files</button>
+        <button class="sidebar-tab" onclick="switchTab('git')" id="tabGit">git</button>
       </div>
 
-      <!-- Chats panel -->
+      <!-- Chats -->
       <div class="sidebar-panel" id="panelChats">
         <div class="sidebar-nav">
           <button class="nav-btn active" onclick="newChat()">
@@ -80,36 +82,54 @@
         <div class="sidebar-chats" id="chatHistory"></div>
       </div>
 
-      <!-- Files panel -->
+      <!-- Files -->
       <div class="sidebar-panel hidden" id="panelFiles">
         <div class="workspace-bar">
           <span id="workspacePath" class="workspace-path"></span>
-          <button class="workspace-change" onclick="changeWorkspace()" title="Change workspace">...</button>
+          <button class="workspace-change" onclick="changeWorkspace()">...</button>
         </div>
         <div class="file-tree" id="fileTree"></div>
       </div>
 
+      <!-- Git -->
+      <div class="sidebar-panel hidden" id="panelGit">
+        <div class="git-header">
+          <span class="git-branch" id="gitBranch"></span>
+          <button class="git-refresh" onclick="loadGitStatus()">&#8635;</button>
+        </div>
+        <div class="git-files" id="gitFiles"></div>
+        <div class="git-actions">
+          <input type="text" id="commitMsg" placeholder="commit message..." class="git-commit-input">
+          <div class="git-btns">
+            <button class="git-btn" onclick="gitCommit()">commit</button>
+            <button class="git-btn" onclick="gitPush()">push</button>
+          </div>
+          <div class="git-output" id="gitOutput"></div>
+        </div>
+      </div>
+
       <div class="sidebar-footer">
         <div class="sidebar-actions">
-          <button class="sidebar-action-btn" onclick="exportChats()" title="Export">export</button>
-          <button class="sidebar-action-btn" onclick="importChats()" title="Import">import</button>
-          <button class="sidebar-action-btn" onclick="exportMarkdown()" title="Export as markdown">md</button>
-          <button class="sidebar-action-btn" onclick="toggleSettings()" title="Settings (Ctrl+,)">settings</button>
+          <button class="sidebar-action-btn" onclick="exportChats()">export</button>
+          <button class="sidebar-action-btn" onclick="importChats()">import</button>
+          <button class="sidebar-action-btn" onclick="exportMarkdown()">md</button>
+          <button class="sidebar-action-btn" onclick="toggleSettings()">settings</button>
         </div>
         <div class="model-select">
           <label>model</label>
-          <select id="modelSelect">
-            <option value="grok-4-1-fast-reasoning">grok-4-1-fast-reasoning</option>
-            <option value="grok-3-fast">grok-3-fast</option>
-            <option value="grok-3">grok-3</option>
-            <option value="grok-3-mini">grok-3-mini</option>
-          </select>
+          <select id="modelSelect"></select>
         </div>
-        <div class="token-count" id="tokenCount"></div>
+        <div class="token-info">
+          <span class="token-count" id="tokenCount"></span>
+          <span class="token-cost" id="tokenCost"></span>
+        </div>
+        <div class="context-bar" id="contextBar">
+          <div class="context-fill" id="contextFill"></div>
+        </div>
       </div>
     </aside>
 
-    <!-- Settings Panel -->
+    <!-- Settings -->
     <div class="settings-panel hidden" id="settingsPanel">
       <div class="settings-header">
         <span>settings</span>
@@ -130,6 +150,17 @@
           <input type="password" id="settingApiKey" placeholder="leave empty to use env var">
         </div>
         <div class="setting-group">
+          <label>system prompt preset</label>
+          <select id="settingPreset" onchange="onPresetChange()">
+            <option value="">default</option>
+            <option value="reviewer">code reviewer</option>
+            <option value="debugger">debugger</option>
+            <option value="architect">architect</option>
+            <option value="teacher">teacher</option>
+            <option value="performance">performance optimizer</option>
+          </select>
+        </div>
+        <div class="setting-group">
           <label>temperature</label>
           <input type="range" id="settingTemp" min="0" max="1" step="0.1" value="0.7">
           <span class="setting-value" id="tempValue">0.7</span>
@@ -143,22 +174,44 @@
           <textarea id="settingSystemPrompt" rows="4" placeholder="Custom system prompt (leave empty for default)"></textarea>
         </div>
         <div class="setting-group">
-          <label class="setting-checkbox">
-            <input type="checkbox" id="settingSound">
-            sound notification on completion
-          </label>
+          <label class="setting-checkbox"><input type="checkbox" id="settingSound"> sound notification</label>
+        </div>
+        <div class="setting-group">
+          <label class="setting-checkbox"><input type="checkbox" id="settingAutoContext"> auto-attach detected files</label>
         </div>
         <button class="settings-save" onclick="applySettings()">save</button>
       </div>
     </div>
 
-    <!-- Main chat area -->
+    <!-- Editor Panel -->
+    <div class="editor-panel hidden" id="editorPanel">
+      <div class="editor-tabs" id="editorTabs"></div>
+      <div class="editor-toolbar">
+        <button class="editor-btn" onclick="saveCurrentTab()">save</button>
+        <button class="editor-btn" onclick="closeEditor()">&times;</button>
+      </div>
+      <textarea class="editor-content" id="editorContent" spellcheck="false"></textarea>
+    </div>
+
+    <!-- Main -->
     <main class="chat-area" id="chatArea">
       <div class="chat-header">
         <button class="hamburger" onclick="toggleSidebar()">
           <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
         </button>
         <span class="chat-title" id="chatTitle">new chat</span>
+        <div class="header-actions">
+          <button class="header-btn" onclick="pinMessage()" title="Pin last message">pin</button>
+          <button class="header-btn" onclick="summarizeChat()" title="Summarize conversation">summarize</button>
+          <button class="header-btn" onclick="toggleTerminal()" title="Toggle terminal">terminal</button>
+        </div>
+      </div>
+
+      <!-- Pinned -->
+      <div class="pinned-bar hidden" id="pinnedBar">
+        <div class="pinned-label">pinned</div>
+        <div class="pinned-list" id="pinnedList"></div>
+        <button class="pinned-close" onclick="document.getElementById('pinnedBar').classList.add('hidden')">&times;</button>
       </div>
 
       <div class="messages" id="messages">
@@ -174,12 +227,23 @@
         </div>
       </div>
 
-      <!-- Drop zone -->
-      <div class="drop-zone hidden" id="dropZone">
-        <span>drop file to attach</span>
+      <div class="drop-zone hidden" id="dropZone"><span>drop file to attach</span></div>
+
+      <!-- Terminal -->
+      <div class="terminal-panel hidden" id="terminalPanel">
+        <div class="terminal-header">
+          <span>terminal</span>
+          <button onclick="clearTerminal()">clear</button>
+          <button onclick="toggleTerminal()">&times;</button>
+        </div>
+        <div class="terminal-output" id="terminalOutput"></div>
+        <div class="terminal-input-line">
+          <span class="terminal-prompt">$</span>
+          <input type="text" id="terminalInput" placeholder="enter command..." onkeydown="if(event.key==='Enter')runTerminal()">
+        </div>
       </div>
 
-      <!-- Input area -->
+      <!-- Input -->
       <div class="input-area">
         <div class="input-container">
           <button class="template-btn" onclick="toggleTemplates()" title="Prompt templates">
@@ -194,16 +258,12 @@
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="3" y="3" width="10" height="10" rx="1" fill="currentColor"/></svg>
           </button>
         </div>
-        <div class="input-hint">enter send &middot; shift+enter newline &middot; ctrl+n new &middot; ctrl+, settings &middot; ctrl+f search</div>
+        <div class="input-hint">enter send &middot; ctrl+k commands &middot; ctrl+n new &middot; ctrl+` terminal</div>
       </div>
     </main>
   </div>
 
   <script src="/static/app.js"></script>
-  <script>
-    document.getElementById("settingTemp").addEventListener("input", function() {
-      document.getElementById("tempValue").textContent = this.value;
-    });
-  </script>
+  <script>document.getElementById("settingTemp").addEventListener("input",function(){document.getElementById("tempValue").textContent=this.value});</script>
 </body>
 </html>
