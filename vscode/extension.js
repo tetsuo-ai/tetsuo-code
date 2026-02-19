@@ -42,22 +42,50 @@ function waitForServer(port, timeout = 15000) {
 }
 
 function findPython() {
-  return process.platform === "win32"
+  const candidates = process.platform === "win32"
     ? ["python", "python3", "py"]
     : ["python3", "python"];
+
+  // On Windows, also check common install locations
+  if (process.platform === "win32") {
+    const home = process.env.USERPROFILE || "";
+    const programFiles = process.env.ProgramFiles || "C:\\Program Files";
+    const localAppData = process.env.LOCALAPPDATA || "";
+    candidates.push(
+      path.join(localAppData, "Programs", "Python", "Python313", "python.exe"),
+      path.join(localAppData, "Programs", "Python", "Python312", "python.exe"),
+      path.join(localAppData, "Programs", "Python", "Python311", "python.exe"),
+      path.join(localAppData, "Programs", "Python", "Python310", "python.exe"),
+      path.join(programFiles, "Python313", "python.exe"),
+      path.join(programFiles, "Python312", "python.exe"),
+      path.join(programFiles, "Python311", "python.exe"),
+      path.join(programFiles, "Python310", "python.exe"),
+    );
+  }
+  return candidates;
 }
 
 async function startServer(context) {
   serverPort = await findFreePort();
   const config = vscode.workspace.getConfiguration("tetsuocode");
-  const workspace = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || "";
+  const workspace = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.env.HOME || process.env.USERPROFILE || "";
   const extPath = context.extensionPath;
-  const webPath = path.join(extPath, "..", "web");
+  const fs = require("fs");
+
+  // Find where web/ module lives: bundled inside extension, or parent dir (dev mode)
+  let basePath = extPath;
+  const webCheck = path.join(extPath, "web", "app.py");
+  console.log(`[tetsuocode] extPath=${extPath}, checking ${webCheck}, exists=${fs.existsSync(webCheck)}`);
+  if (!fs.existsSync(webCheck)) {
+    basePath = path.join(extPath, "..");
+    console.log(`[tetsuocode] web/app.py not in extension dir, trying parent: ${basePath}`);
+  }
+  console.log(`[tetsuocode] basePath=${basePath}, workspace=${workspace}`);
 
   const env = {
     ...process.env,
     TETSUO_WORKSPACE: workspace,
-    PYTHONPATH: path.join(extPath, ".."),
+    PYTHONPATH: basePath,
   };
 
   const apiKey = config.get("apiKey") || process.env.XAI_API_KEY || "";
@@ -66,7 +94,7 @@ async function startServer(context) {
   for (const py of findPython()) {
     try {
       pythonProcess = spawn(py, ["-m", "web.app", "--port", String(serverPort)], {
-        cwd: path.join(extPath, ".."),
+        cwd: basePath,
         env,
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
@@ -78,17 +106,26 @@ async function startServer(context) {
       pythonProcess.stderr.on("data", (d) => {
         console.error(`[tetsuocode] ${d}`);
       });
-      pythonProcess.on("error", () => {});
+      let errored = false;
+      pythonProcess.on("error", (err) => {
+        console.error(`[tetsuocode] spawn error with ${py}: ${err.message}`);
+        errored = true;
+      });
       pythonProcess.on("exit", (code) => {
         console.log(`[tetsuocode] server exited (${code})`);
         pythonProcess = null;
         if (statusBar) statusBar.text = "$(warning) tetsuocode: offline";
       });
 
+      // Give spawn a moment to fail
+      await new Promise((r) => setTimeout(r, 500));
+      if (errored || !pythonProcess) continue;
+
       await waitForServer(serverPort);
       console.log(`[tetsuocode] server running on :${serverPort} via ${py}`);
       return true;
-    } catch {
+    } catch (err) {
+      console.error(`[tetsuocode] failed with ${py}: ${err.message}`);
       if (pythonProcess) { pythonProcess.kill(); pythonProcess = null; }
     }
   }
@@ -108,10 +145,28 @@ class ChatViewProvider {
   constructor(context) {
     this._context = context;
     this._view = null;
+    this._viewReady = null;
+    this._viewReadyResolve = null;
+  }
+
+  waitForView(timeout = 3000) {
+    if (this._view) return Promise.resolve();
+    if (!this._viewReady) {
+      this._viewReady = new Promise((resolve) => { this._viewReadyResolve = resolve; });
+    }
+    return Promise.race([
+      this._viewReady,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("Webview timeout")), timeout)),
+    ]);
   }
 
   resolveWebviewView(webviewView) {
     this._view = webviewView;
+    if (this._viewReadyResolve) {
+      this._viewReadyResolve();
+      this._viewReady = null;
+      this._viewReadyResolve = null;
+    }
 
     webviewView.webview.options = {
       enableScripts: true,
@@ -191,67 +246,91 @@ class ChatViewProvider {
       context_mode: "smart",
     });
 
-    try {
-      const response = await fetch(`http://127.0.0.1:${serverPort}/api/chat`, {
+    const self = this;
+    let gotTokens = false;
+    return new Promise((resolve) => {
+      const req = http.request({
+        hostname: "127.0.0.1",
+        port: serverPort,
+        path: "/api/chat",
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body,
-      });
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          const data = line.slice(6);
-          if (data === "[DONE]") {
-            this.postMessage({ type: "done" });
-            continue;
-          }
-          try {
-            const parsed = JSON.parse(data);
-            if (parsed.token) {
-              this.postMessage({ type: "token", token: parsed.token });
-            } else if (parsed.tool_call) {
-              this.postMessage({ type: "tool", call: parsed.tool_call });
-            } else if (parsed.tool_result) {
-              this.postMessage({ type: "toolResult", result: parsed.tool_result });
-            } else if (parsed.error) {
-              this.postMessage({ type: "error", error: parsed.error });
+        headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
+      }, (res) => {
+        let buffer = "";
+        res.setEncoding("utf-8");
+        res.on("data", (chunk) => {
+          buffer += chunk;
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            const data = line.slice(6);
+            if (data === "[DONE]") {
+              self.postMessage({ type: "done" });
+              continue;
             }
-          } catch {}
-        }
-      }
-    } catch (err) {
-      this.postMessage({ type: "error", error: err.message });
-    }
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed.content || parsed.token) {
+                gotTokens = true;
+                self.postMessage({ type: "token", token: parsed.content || parsed.token });
+              } else if (parsed.tool_call) {
+                self.postMessage({ type: "tool", call: parsed.tool_call });
+              } else if (parsed.tool_result) {
+                self.postMessage({ type: "toolResult", result: parsed.tool_result });
+              } else if (parsed.error) {
+                self.postMessage({ type: "error", error: parsed.error });
+              }
+            } catch (parseErr) {
+              console.error("[tetsuocode] parse error:", parseErr.message, "raw:", data);
+            }
+          }
+        });
+        res.on("end", () => {
+          if (!gotTokens && buffer.trim()) {
+            // If we got data but no tokens, show whatever came back
+            self.postMessage({ type: "error", error: buffer.trim() });
+          }
+          self.postMessage({ type: "done" });
+          resolve();
+        });
+      });
+      req.on("error", (err) => {
+        self.postMessage({ type: "error", error: err.message });
+        resolve();
+      });
+      req.write(body);
+      req.end();
+    });
   }
 
   _handleCancel() {
-    fetch(`http://127.0.0.1:${serverPort}/api/cancel`, { method: "POST" }).catch(() => {});
+    const req = http.request({ hostname: "127.0.0.1", port: serverPort, path: "/api/cancel", method: "POST" });
+    req.on("error", () => {});
+    req.end();
   }
 
   async _handleReset() {
-    await fetch(`http://127.0.0.1:${serverPort}/api/reset`, { method: "POST" }).catch(() => {});
-    this.postMessage({ type: "cleared" });
+    return new Promise((resolve) => {
+      const req = http.request({ hostname: "127.0.0.1", port: serverPort, path: "/api/reset", method: "POST" }, () => {
+        this.postMessage({ type: "cleared" });
+        resolve();
+      });
+      req.on("error", () => resolve());
+      req.end();
+    });
   }
 
   async _handleApproval(action, index) {
     const endpoint = action === "approve" ? "/api/approve" : "/api/reject";
-    await fetch(`http://127.0.0.1:${serverPort}${endpoint}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ index }),
-    }).catch(() => {});
+    const body = JSON.stringify({ index });
+    const req = http.request({
+      hostname: "127.0.0.1", port: serverPort, path: endpoint, method: "POST",
+      headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
+    });
+    req.on("error", () => {});
+    req.write(body);
+    req.end();
   }
 
   _getHtml(webview) {
@@ -326,15 +405,15 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, Bl
 <div class="header">
   <span class="header-title">TETSUOCODE</span>
   <div class="header-actions">
-    <button class="header-btn" onclick="requestContext()" title="Attach current file">@</button>
-    <button class="header-btn" onclick="resetChat()" title="Reset chat">reset</button>
+    <button class="header-btn" id="ctxBtn" title="Attach current file">@</button>
+    <button class="header-btn" id="resetBtn" title="Reset chat">reset</button>
   </div>
 </div>
 
 <div class="context-bar" id="contextBar">
   <span>context:</span>
   <span class="context-file" id="contextFile"></span>
-  <button class="context-close" onclick="clearContext()">&times;</button>
+  <button class="context-close" id="ctxClose">&times;</button>
 </div>
 
 <div class="messages" id="messages">
@@ -342,18 +421,18 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, Bl
     <h3>tetsuocode</h3>
     <p>AI coding assistant powered by Grok</p>
     <div class="hints">
-      <span class="hint" onclick="useHint('explain this file')">explain this file</span>
-      <span class="hint" onclick="useHint('find bugs')">find bugs</span>
-      <span class="hint" onclick="useHint('write tests')">write tests</span>
-      <span class="hint" onclick="useHint('refactor')">refactor</span>
+      <span class="hint" data-hint="explain this file">explain this file</span>
+      <span class="hint" data-hint="find bugs">find bugs</span>
+      <span class="hint" data-hint="write tests">write tests</span>
+      <span class="hint" data-hint="refactor">refactor</span>
     </div>
   </div>
 </div>
 
 <div class="input-area">
   <div class="input-row">
-    <textarea id="input" rows="1" placeholder="Ask tetsuocode..." onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
-    <button class="send-btn" id="sendBtn" onclick="send()">Send</button>
+    <textarea id="input" rows="1" placeholder="Ask tetsuocode..."></textarea>
+    <button class="send-btn" id="sendBtn">Send</button>
   </div>
 </div>
 <div class="status-line" id="statusLine">ready</div>
@@ -569,6 +648,16 @@ window.addEventListener("message", (event) => {
   }
 });
 
+// Wire up event listeners (no inline handlers allowed by CSP)
+sendBtn.addEventListener("click", () => send());
+document.getElementById("ctxBtn").addEventListener("click", () => requestContext());
+document.getElementById("resetBtn").addEventListener("click", () => resetChat());
+document.getElementById("ctxClose").addEventListener("click", () => clearContext());
+inputEl.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });
+inputEl.addEventListener("input", () => { inputEl.style.height = "auto"; inputEl.style.height = Math.min(inputEl.scrollHeight, 120) + "px"; });
+document.querySelectorAll(".hint").forEach((el) => {
+  el.addEventListener("click", () => useHint(el.getAttribute("data-hint")));
+});
 inputEl.focus();
 </script>
 </body></html>`;
@@ -634,7 +723,12 @@ async function activate(context) {
       });
       if (question && chatProvider) {
         await vscode.commands.executeCommand("tetsuocode.chat.focus");
-        setTimeout(() => chatProvider.sendPrompt(question), 500);
+        try {
+          await chatProvider.waitForView();
+          chatProvider.sendPrompt(question);
+        } catch {
+          vscode.window.showWarningMessage("tetsuocode: Chat panel not ready. Try again.");
+        }
       }
     }),
 
@@ -673,7 +767,7 @@ async function activate(context) {
   console.log("[tetsuocode] activated");
 }
 
-function sendSelectionCommand(prompt) {
+async function sendSelectionCommand(prompt) {
   const editor = vscode.window.activeTextEditor;
   if (!editor) return;
   const selection = editor.document.getText(editor.selection);
@@ -687,10 +781,13 @@ function sendSelectionCommand(prompt) {
 
   const fullPrompt = `${prompt}\n\nFrom \`${file}\`:\n\`\`\`${lang}\n${selection}\n\`\`\``;
 
-  vscode.commands.executeCommand("tetsuocode.chat.focus");
-  setTimeout(() => {
-    if (chatProvider) chatProvider.sendPrompt(fullPrompt);
-  }, 500);
+  await vscode.commands.executeCommand("tetsuocode.chat.focus");
+  try {
+    await chatProvider.waitForView();
+    chatProvider.sendPrompt(fullPrompt);
+  } catch {
+    vscode.window.showWarningMessage("tetsuocode: Chat panel not ready. Try again.");
+  }
 }
 
 function deactivate() {

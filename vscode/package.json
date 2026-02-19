@@ -2,7 +2,7 @@
   "name": "tetsuocode",
   "displayName": "tetsuocode",
   "description": "AI coding assistant powered by Grok",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "publisher": "tetsuo-ai",
   "icon": "icon.png",
   "repository": {
@@ -48,8 +48,8 @@
       ]
     },
     "keybindings": [
-      { "command": "tetsuocode.toggle", "key": "ctrl+shift+t", "mac": "cmd+shift+t" },
-      { "command": "tetsuocode.ask", "key": "ctrl+shift+a", "mac": "cmd+shift+a" }
+      { "command": "tetsuocode.toggle", "key": "ctrl+alt+t", "mac": "cmd+alt+t" },
+      { "command": "tetsuocode.ask", "key": "ctrl+alt+a", "mac": "cmd+alt+a" }
     ],
     "configuration": {
       "title": "tetsuocode",
